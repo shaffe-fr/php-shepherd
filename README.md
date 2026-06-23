@@ -114,21 +114,64 @@ php -v             # → PHP 8.5.x
 
 If no `.phpversion` is found while walking up the tree, Shepherd falls back to asking Herd directly via `herd.phar which-php`.
 
+To see which PHP versions are available:
+
+```powershell
+shp list
+```
+
 When the version in `.phpversion` differs from what's configured in Herd's nginx, Shepherd updates the config and restarts nginx in the background — so your local `.test` domain always matches.
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `shp use [version]` | Set the PHP version for the current project, or list available versions |
-| `shp status` | Show current PHP version and configuration |
-| `shp xdebug [mode]` | Toggle xdebug on/off for the resolved PHP version |
-| `shp ext add <name>` | Add a PHP extension from PECL |
-| `shp install` | Install the `php`/`composer` shims and prepend them to the User PATH |
-| `shp uninstall` | Remove the shims and clean up the PATH |
-| `shp doctor` | Diagnose common issues with Shepherd setup |
-| `shp self-update` | Update Shepherd to the latest GitHub release (with SHA256 verification) |
-| `shp version` | Show the current Shepherd version |
+| Command              | Description                                                             |
+|----------------------|-------------------------------------------------------------------------|
+| `shp use [version]`  | Set the PHP version for the current project, or list available versions |
+| `shp list`           | List available PHP versions                                             |
+| `shp status`         | Show current PHP version and configuration                              |
+| `shp xdebug [mode]`  | Toggle xdebug on/off for the resolved PHP version                       |
+| `shp ext add <name>` | Add a PHP extension from PECL                                           |
+| `shp install`        | Install the `php`/`composer` shims and prepend them to the User PATH    |
+| `shp uninstall`      | Remove the shims and clean up the PATH                                  |
+| `shp doctor`         | Diagnose common issues with Shepherd setup                              |
+| `shp self-update`    | Update Shepherd to the latest GitHub release (with SHA256 verification) |
+| `shp version`        | Show the current Shepherd version                                       |
+
+### Global flags
+
+| Flag        | Description                    |
+|-------------|--------------------------------|
+| `--verbose` | Show extra diagnostic output   |
+| `--quiet`   | Suppress non-essential output  |
+
+These can be placed anywhere in the command:
+
+```powershell
+shp status --verbose
+shp ext add redis --quiet
+```
+
+### Machine-readable output
+
+`shp status --json` outputs a JSON object for scripting and editor integrations:
+
+```powershell
+shp status --json
+```
+
+```json
+{
+  "phpLocal": "8.4",
+  "phpGlobal": "8.5",
+  "xdebugEnabled": false,
+  "xdebugMode": "",
+  "phpShimInstalled": true,
+  "composerShimInstalled": true,
+  "shimDir": "C:\\Users\\you\\.config\\shepherd\\bin",
+  "pathConfigured": true,
+  "shepherdVersion": "0.5.0"
+}
+```
 
 When invoked as `php`/`php.exe` or `composer`/`composer.exe`, it acts as a transparent PHP version switcher (see [Multicall binary](#multicall-binary)).
 
@@ -210,22 +253,22 @@ The command handles the entire installation — downloading the extension DLL, p
 
 ### Options
 
-| Flag | Description |
-|------|-------------|
-| `--php=X.Y` | Target PHP version (default: resolved from `.phpversion`) |
-| `--ext-version=V` | Extension version (default: latest from PECL) |
-| `--ts` | Use Thread Safe build (default: NTS) |
-| `--vs=vsXX` | Visual Studio version (default: vs17) |
+| Flag              | Description                                               |
+|-------------------|-----------------------------------------------------------|
+| `--php=X.Y`       | Target PHP version (default: resolved from `.phpversion`) |
+| `--ext-version=V` | Extension version (default: latest from PECL)             |
+| `--ts`            | Use Thread Safe build (default: NTS)                      |
+| `--vs=vsXX`       | Visual Studio version (default: vs17)                     |
 
 ## Multicall binary
 
 The binary detects how it was invoked via its filename:
 
-| Invoked as | Behavior |
-|-----------|----------|
-| `php` or `php.exe` | Runs PHP with your arguments |
-| `composer` or `composer.exe` | Runs `composer.phar` via the resolved PHP |
-| `shp.exe` | Management commands (`install`/`uninstall`/`status`/`xdebug`/`ext`/`self-update`) |
+| Invoked as                   | Behavior                                                                          |
+|------------------------------|-----------------------------------------------------------------------------------|
+| `php` or `php.exe`           | Runs PHP with your arguments                                                      |
+| `composer` or `composer.exe` | Runs `composer.phar` via the resolved PHP                                         |
+| `shp.exe`                    | Management commands (`install`/`uninstall`/`status`/`xdebug`/`ext`/`self-update`) |
 
 This means you only need one binary — the `install` command sets up all three names for you.
 
@@ -266,17 +309,6 @@ otherwise Herd's own `php.exe` wins. The `install` command handles this for you,
   Open a fresh terminal.
 - **`php X.Y not found`** — the version in `.phpversion` isn't installed in Herd. Install it
   from the Herd UI, or pick an installed version.
-
-## Comparison with batch scripts
-
-| | Batch scripts | Shepherd |
-|---|---|---|
-| Spawn subshells | Yes (cmd.exe chains) | No |
-| PATH recursion risk | High | Impossible |
-| CR/LF handling | Manual, error-prone | Automatic |
-| Startup overhead | ~50-100ms (multiple cmd.exe) | <1ms |
-| Cross-shell compat | Needs .bat + bash variants | Single .exe works everywhere |
-| nginx sync | Separate script, blocking | Built-in, non-blocking |
 
 ## License
 
