@@ -50,6 +50,12 @@ This will:
 - Prepend that directory to your **User** `PATH` (so it takes precedence over Herd's own `php`)
 - Broadcast the environment change to running apps
 
+Use `--force` (or `-f`) to kill running shim processes before overwriting — useful when a previous `php.exe` or `composer.exe` shim is still in use by another process:
+
+```powershell
+.\flock.exe install --force
+```
+
 Then **restart your terminal** for the `PATH` change to take effect.
 
 Verify it worked:
