@@ -1132,6 +1132,7 @@ func extUsage() {
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  --php=X.Y         Target PHP version (default: resolved from .phpversion)")
+	fmt.Println("  --php=all         Install for all PHP versions")
 	fmt.Println("  --ext-version=V   Extension version (default: latest from PECL)")
 	fmt.Println("  --ts              Use Thread Safe build (default: NTS)")
 	fmt.Println("  --vs=vsXX         Visual Studio version (default: vs17)")
@@ -1183,7 +1184,54 @@ func cmdExtInstall() {
 		}
 	}
 
-	// Resolve PHP version
+	// Resolve PHP version(s)
+	if phpVersion == "all" {
+		versions := installedPHPVersions()
+		if len(versions) == 0 {
+			fmt.Fprintf(os.Stderr, "Error: no PHP installations found in %s\n", herdHome())
+			os.Exit(1)
+		}
+
+		// Detect extension version once (shared across all PHP versions)
+		if extVersion == "" {
+			var err error
+			extVersion, err = detectPeclVersion(extName)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		// Install system-level dependencies once
+		if len(extDef.wingetDeps) > 0 {
+			fmt.Println("Checking system dependencies...")
+			if err := installWingetDeps(extDef.wingetDeps); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+				fmt.Fprintf(os.Stderr, "  The extension may not work without this dependency.\n")
+			}
+			fmt.Println()
+		}
+
+		fmt.Printf("Installing %s %s for all PHP versions: %s\n\n", extName, extVersion, strings.Join(versions, ", "))
+
+		var failed []string
+		for _, ver := range versions {
+			fmt.Printf("── PHP %s ──\n", ver)
+			if err := installExtForVersion(extDef, extName, extVersion, ver, vsVersion, threadSafe); err != nil {
+				fmt.Fprintf(os.Stderr, "  ✗ %v\n", err)
+				failed = append(failed, ver)
+			}
+			fmt.Println()
+		}
+
+		if len(failed) > 0 {
+			fmt.Printf("⚠️  Failed for: %s\n", strings.Join(failed, ", "))
+			os.Exit(1)
+		}
+		fmt.Printf("✅ %s %s installed for all PHP versions\n", extName, extVersion)
+		return
+	}
+
 	if phpVersion == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -1193,12 +1241,13 @@ func cmdExtInstall() {
 		phpVersion = findPHPVersion(cwd)
 		if phpVersion == "" {
 			fmt.Fprintf(os.Stderr, "Error: no .phpversion found and --php not specified\n")
+			fmt.Fprintf(os.Stderr, "  Tip: use --php=all to install for all PHP versions\n")
 			os.Exit(1)
 		}
 	}
 
 	if !versionRe.MatchString(phpVersion) {
-		fmt.Fprintf(os.Stderr, "Error: invalid PHP version format: %q (expected X.Y)\n", phpVersion)
+		fmt.Fprintf(os.Stderr, "Error: invalid PHP version format: %q (expected X.Y or \"all\")\n", phpVersion)
 		os.Exit(1)
 	}
 
@@ -1315,6 +1364,105 @@ func cmdExtInstall() {
 		fmt.Println()
 		fmt.Printf("  Note: %s\n", extDef.postInstallMsg)
 	}
+}
+
+// installedPHPVersions returns a sorted list of all PHP version strings
+// (e.g. ["8.3", "8.4", "8.5"]) installed under Herd.
+func installedPHPVersions() []string {
+	pattern := filepath.Join(herdHome(), "php*")
+	matches, _ := filepath.Glob(pattern)
+
+	// Sort by version ascending
+	sort.Slice(matches, func(i, j int) bool {
+		return phpDirVersion(matches[i]) < phpDirVersion(matches[j])
+	})
+
+	var versions []string
+	for _, m := range matches {
+		dirName := filepath.Base(m)
+		dm := phpDirRe.FindStringSubmatch(dirName)
+		if len(dm) != 3 {
+			continue
+		}
+		// Verify php.exe exists
+		if _, err := os.Stat(filepath.Join(m, "php.exe")); err != nil {
+			continue
+		}
+		versions = append(versions, dm[1]+"."+dm[2])
+	}
+	return versions
+}
+
+// installExtForVersion installs an extension for a single PHP version.
+// Returns an error instead of calling os.Exit so the caller can continue with other versions.
+func installExtForVersion(extDef *extDefinition, extName, extVersion, phpVersion, vsVersion string, threadSafe bool) error {
+	nodot := strings.ReplaceAll(phpVersion, ".", "")
+	phpDir := filepath.Join(herdHome(), "php"+nodot)
+	phpExe := filepath.Join(phpDir, "php.exe")
+
+	if _, err := os.Stat(phpExe); err != nil {
+		return fmt.Errorf("PHP %s not found at %s", phpVersion, phpDir)
+	}
+
+	ts := "nts"
+	if threadSafe {
+		ts = "ts"
+	}
+	arch := "x64"
+	downloadURL := buildExtURL(extDef.source.urlPattern, extVersion, phpVersion, ts, vsVersion, arch)
+
+	fmt.Printf("  Downloading: %s\n", downloadURL)
+
+	zipPath, err := downloadFile(downloadURL)
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+	defer os.Remove(zipPath)
+
+	// Extract and install
+	extDir := filepath.Join(phpDir, "ext")
+	if err := os.MkdirAll(extDir, 0755); err != nil {
+		return fmt.Errorf("cannot create ext directory: %w", err)
+	}
+
+	installed, err := installExtFiles(zipPath, extName, phpDir, extDir)
+	if err != nil {
+		return fmt.Errorf("install failed: %w", err)
+	}
+	if !installed {
+		fmt.Printf("  Warning: no php_%s.dll found in archive\n", extName)
+	}
+
+	// Download and install dependency libraries
+	if extDef.source.depsURLPattern != "" {
+		depsURL := buildExtURL(extDef.source.depsURLPattern, extVersion, phpVersion, ts, vsVersion, arch)
+		fmt.Printf("  Downloading dependencies...\n")
+
+		depsZipPath, err := downloadFile(depsURL)
+		if err != nil {
+			fmt.Printf("  Warning: failed to download dependencies: %v\n", err)
+		} else {
+			defer os.Remove(depsZipPath)
+			if _, err := installExtFiles(depsZipPath, extName, phpDir, extDir); err != nil {
+				fmt.Printf("  Warning: failed to install dependencies: %v\n", err)
+			}
+		}
+	}
+
+	// Update php.ini
+	iniPath := filepath.Join(phpDir, "php.ini")
+	if err := addExtensionToIni(iniPath, extName); err != nil {
+		fmt.Printf("  Warning: %v — add manually: %s=%s\n", err, extDef.directive, extName)
+	}
+
+	// Verify
+	if verifyExtension(phpExe, extDir, extName) {
+		fmt.Printf("  ✓ %s %s installed for PHP %s\n", extName, extVersion, phpVersion)
+	} else {
+		fmt.Printf("  ⚠️  %s may not load correctly for PHP %s\n", extName, phpVersion)
+	}
+
+	return nil
 }
 
 // detectPeclVersion scrapes pecl.php.net to find the latest stable version.
