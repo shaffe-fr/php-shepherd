@@ -136,21 +136,29 @@ func whichPHP(bootstrapPHP, dir string) (string, error) {
 	if php == "" {
 		return "", fmt.Errorf("which-php returned empty")
 	}
-	// Validate that the returned path is under herdHome
+	// Validate that the returned path is under herdHome.
+	// Resolve symlinks/junctions to prevent path traversal via symlink tricks.
 	absPhp, err := filepath.Abs(php)
 	if err != nil {
 		return "", fmt.Errorf("invalid path from which-php: %w", err)
 	}
+	// EvalSymlinks resolves symlinks AND cleans the path; if the target doesn't exist
+	// it fails, which is fine (we want an existing php.exe).
+	realPhp, err := filepath.EvalSymlinks(absPhp)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve which-php path: %w", err)
+	}
 	absHerd, _ := filepath.Abs(herdHome())
-	absPhpLower := strings.ToLower(absPhp)
-	absHerdLower := strings.ToLower(absHerd)
+	realHerd, _ := filepath.EvalSymlinks(absHerd)
+	realPhpLower := strings.ToLower(realPhp)
+	realHerdLower := strings.ToLower(realHerd)
 	sep := string(os.PathSeparator)
 	// Ensure the returned path is the Herd dir itself or strictly inside it.
 	// A plain HasPrefix check would wrongly accept siblings like "...\bin-evil".
-	if absPhpLower != absHerdLower && !strings.HasPrefix(absPhpLower, absHerdLower+sep) {
+	if realPhpLower != realHerdLower && !strings.HasPrefix(realPhpLower, realHerdLower+sep) {
 		return "", fmt.Errorf("which-php returned path outside Herd directory: %s", php)
 	}
-	return absPhp, nil
+	return realPhp, nil
 }
 
 // extractVersion extracts the PHP version from a path like .../php84/php.exe -> "8.4"
@@ -557,11 +565,28 @@ func killShimProcesses(dir string) {
 		if err != nil || pid == myPID {
 			continue
 		}
-		// If we have path info from wmic, verify it's in our shim dir
-		if p, ok := pidPath[pid]; ok {
-			if !strings.HasPrefix(strings.ToLower(p), dirLower+`\`) {
-				continue
+		// Verify the process path is inside our shim dir.
+		// If we cannot determine the path (wmic unavailable on Win11 24H2+),
+		// skip the process to avoid killing unrelated php.exe instances.
+		p, ok := pidPath[pid]
+		if !ok {
+			// Try PowerShell as fallback to get the process path
+			psOut, psErr := exec.Command("powershell", "-NoProfile", "-Command",
+				fmt.Sprintf("(Get-Process -Id %d -ErrorAction SilentlyContinue).Path", pid)).Output()
+			if psErr == nil {
+				psPath := strings.TrimSpace(string(psOut))
+				if psPath != "" {
+					p = psPath
+					ok = true
+				}
 			}
+		}
+		if !ok {
+			// Cannot determine process path — skip to avoid killing unrelated processes
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(p), dirLower+`\`) {
+			continue
 		}
 		proc, err := os.FindProcess(pid)
 		if err != nil {
@@ -2003,18 +2028,37 @@ func replaceBinary(target, newBinary string) error {
 		return fmt.Errorf("cannot rename %s: %w", target, err)
 	}
 
-	// Copy new binary to target path
-	data, err := os.ReadFile(newBinary)
+	// Write new binary to a temp file in the same directory (ensures same volume for rename)
+	dir := filepath.Dir(target)
+	tmpFile, err := os.CreateTemp(dir, "shp-update-*.exe")
 	if err != nil {
 		// Rollback
+		os.Rename(oldPath, target)
+		return fmt.Errorf("cannot create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	data, err := os.ReadFile(newBinary)
+	if err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
 		os.Rename(oldPath, target)
 		return fmt.Errorf("cannot read new binary: %w", err)
 	}
 
-	if err := os.WriteFile(target, data, 0755); err != nil {
-		// Rollback
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
 		os.Rename(oldPath, target)
-		return fmt.Errorf("cannot write new binary: %w", err)
+		return fmt.Errorf("cannot write temp binary: %w", err)
+	}
+	tmpFile.Close()
+
+	// Atomic rename from temp to target (same volume = atomic on NTFS)
+	if err := os.Rename(tmpPath, target); err != nil {
+		os.Remove(tmpPath)
+		os.Rename(oldPath, target)
+		return fmt.Errorf("cannot rename temp to target: %w", err)
 	}
 
 	// Clean up old binary (best effort, may fail if still running)
