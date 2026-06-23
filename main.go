@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -387,13 +388,63 @@ func broadcastSettingChange() {
 }
 
 // cmdInstall installs the shims and configures PATH.
+func killShimProcesses(dir string) {
+	// Use WMIC to find processes whose executable path is inside the shim directory.
+	dir = strings.TrimRight(dir, `\`)
+	// Double backslashes for WMIC LIKE query
+	escapedDir := strings.ReplaceAll(dir, `\`, `\\`)
+	query := fmt.Sprintf(`Path Win32_Process Where "ExecutablePath Like '%s\\%%'"`, escapedDir)
+
+	out, err := exec.Command("wmic", "process", "where",
+		fmt.Sprintf(`ExecutablePath Like '%s\\%%'`, escapedDir),
+		"get", "ProcessId", "/value").Output()
+	if err != nil {
+		// WMIC may fail if no matching processes — that's fine
+		_ = query
+		return
+	}
+
+	// Parse PIDs from WMIC output (lines like "ProcessId=1234")
+	myPID := os.Getpid()
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "ProcessId=") {
+			continue
+		}
+		pidStr := strings.TrimPrefix(line, "ProcessId=")
+		pid, err := strconv.Atoi(strings.TrimSpace(pidStr))
+		if err != nil || pid == myPID {
+			continue
+		}
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		_ = proc.Kill()
+		fmt.Printf("  ✓ Killed shim process (PID %d)\n", pid)
+	}
+}
+
 func cmdInstall() {
 	dir := shimDir()
+
+	// Parse --force flag
+	force := false
+	for _, arg := range os.Args[2:] {
+		if arg == "--force" || arg == "-f" {
+			force = true
+		}
+	}
 
 	// Create shim directory
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating directory %s: %v\n", dir, err)
 		os.Exit(1)
+	}
+
+	// Kill shim processes if --force is used
+	if force {
+		killShimProcesses(dir)
 	}
 
 	// Copy current binary as php.exe and composer.exe
@@ -411,6 +462,14 @@ func cmdInstall() {
 
 	for _, name := range []string{"php.exe", "composer.exe", "flock.exe"} {
 		dest := filepath.Join(dir, name)
+
+		// Skip if already identical
+		existing, err := os.ReadFile(dest)
+		if err == nil && bytes.Equal(existing, selfData) {
+			fmt.Printf("  • %s is up to date\n", dest)
+			continue
+		}
+
 		if err := os.WriteFile(dest, selfData, 0755); err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", dest, err)
 			os.Exit(1)
