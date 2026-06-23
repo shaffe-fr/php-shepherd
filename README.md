@@ -70,7 +70,8 @@ To remove everything (shims + PATH entry):
 shp uninstall
 ```
 
-### Manual installation (alternative)
+<details>
+<summary>Manual installation (alternative)</summary>
 
 If you prefer to manage your own `PATH`, copy the binary under both names into a
 directory that comes **before** Herd's `~/.config/herd/bin` in your `PATH`:
@@ -81,6 +82,8 @@ New-Item -ItemType Directory -Force -Path $dest | Out-Null
 Copy-Item shp.exe "$dest\php.exe"
 Copy-Item shp.exe "$dest\composer.exe"
 ```
+
+</details>
 
 ### From source
 
