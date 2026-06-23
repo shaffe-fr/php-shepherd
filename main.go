@@ -54,6 +54,21 @@ func herdHome() string {
 	return filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "bin")
 }
 
+// checkHerd returns true if Herd appears to be installed (bin directory exists).
+func checkHerd() bool {
+	info, err := os.Stat(herdHome())
+	return err == nil && info.IsDir()
+}
+
+// requireHerd exits with a clear message if Herd is not installed.
+func requireHerd() {
+	if !checkHerd() {
+		fmt.Fprintf(os.Stderr, "Shepherd requires Laravel Herd for Windows.\n")
+		fmt.Fprintf(os.Stderr, "Install it from https://herd.laravel.com\n")
+		os.Exit(1)
+	}
+}
+
 // findPHPVersion walks up from dir looking for a .phpversion file.
 // Returns the version string (e.g. "8.5") or empty if not found.
 func findPHPVersion(dir string) string {
@@ -290,6 +305,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "shp: cannot get working directory: %v\n", err)
 		os.Exit(1)
 	}
+
+	requireHerd()
 
 	var targetPHP string
 	var version string
@@ -1407,6 +1424,15 @@ func cmdDoctor() {
 	fmt.Println()
 
 	issues := 0
+
+	// 0. Check Herd is installed
+	if !checkHerd() {
+		fmt.Printf("  ✗ Laravel Herd is not installed (expected %s)\n", herdHome())
+		fmt.Printf("    → Install from https://herd.laravel.com\n")
+		issues++
+	} else {
+		fmt.Printf("  ✓ Laravel Herd found\n")
+	}
 
 	// 1. Check .phpversion in cwd
 	cwd, err := os.Getwd()
