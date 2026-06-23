@@ -34,6 +34,16 @@ var verbose bool
 // quiet suppresses non-essential output.
 var quiet bool
 
+// jsonOutput controls whether commands output JSON instead of human-readable text.
+var jsonOutput bool
+
+// outputJSON encodes v as indented JSON to stdout. Used by commands that support --json.
+func outputJSON(v interface{}) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
+}
+
 // httpClient is the shared HTTP client with a sensible timeout.
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
@@ -275,7 +285,7 @@ func rewriteXdebugArgs(args []string, version string) []string {
 }
 
 func main() {
-	// Parse global flags (--verbose, --quiet) before anything else.
+	// Parse global flags (--verbose, --quiet, --json) before anything else.
 	// These are stripped from os.Args so subcommands don't see them.
 	var cleanedArgs []string
 	for _, arg := range os.Args {
@@ -284,6 +294,8 @@ func main() {
 			verbose = true
 		case "--quiet", "-q":
 			quiet = true
+		case "--json":
+			jsonOutput = true
 		default:
 			cleanedArgs = append(cleanedArgs, arg)
 		}
@@ -489,8 +501,14 @@ func cmdList() {
 		currentVersion = findPHPVersion(cwd)
 	}
 
-	fmt.Println("Available PHP versions:")
-	fmt.Println()
+	// Collect versions
+	type phpVersionInfo struct {
+		Version string `json:"version"`
+		Active  bool   `json:"active"`
+		Path    string `json:"path"`
+	}
+	var versions []phpVersionInfo
+
 	for _, m := range matches {
 		dirName := filepath.Base(m)
 		v := phpDirVersion(m)
@@ -505,10 +523,25 @@ func cmdList() {
 			continue
 		}
 		ver := dm[1] + "." + dm[2]
-		if ver == currentVersion {
-			fmt.Printf("  → %s (active)\n", ver)
+		versions = append(versions, phpVersionInfo{
+			Version: ver,
+			Active:  ver == currentVersion,
+			Path:    m,
+		})
+	}
+
+	if jsonOutput {
+		outputJSON(versions)
+		return
+	}
+
+	fmt.Println("Available PHP versions:")
+	fmt.Println()
+	for _, v := range versions {
+		if v.Active {
+			fmt.Printf("  → %s (active)\n", v.Version)
 		} else {
-			fmt.Printf("    %s\n", ver)
+			fmt.Printf("    %s\n", v.Version)
 		}
 	}
 }
@@ -811,14 +844,6 @@ func cmdUninstall() {
 
 // cmdStatus shows the current configuration status.
 func cmdStatus() {
-	// Check for --json flag
-	jsonOutput := false
-	for _, arg := range os.Args[2:] {
-		if arg == "--json" {
-			jsonOutput = true
-		}
-	}
-
 	dir := shimDir()
 	phpShim := filepath.Join(dir, "php.exe")
 	composerShim := filepath.Join(dir, "composer.exe")
@@ -902,20 +927,17 @@ func cmdStatus() {
 
 	// JSON output
 	if jsonOutput {
-		status := map[string]interface{}{
-			"phpLocal":          localVersion,
-			"phpGlobal":         globalVersion,
-			"xdebugEnabled":     xdebugEnabled,
-			"xdebugMode":        xdebugMode,
-			"phpShimInstalled":  phpShimInstalled,
+		outputJSON(map[string]interface{}{
+			"phpLocal":              localVersion,
+			"phpGlobal":            globalVersion,
+			"xdebugEnabled":        xdebugEnabled,
+			"xdebugMode":           xdebugMode,
+			"phpShimInstalled":     phpShimInstalled,
 			"composerShimInstalled": composerShimInstalled,
-			"shimDir":           dir,
-			"pathConfigured":    pathOK,
-			"shepherdVersion":   version,
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(status)
+			"shimDir":              dir,
+			"pathConfigured":       pathOK,
+			"shepherdVersion":      version,
+		})
 		return
 	}
 
@@ -1160,6 +1182,19 @@ func xdebugStatus(lines []string, version string) {
 			}
 		}
 	}
+
+	if jsonOutput {
+		if enabled && mode == "" {
+			mode = "debug"
+		}
+		outputJSON(map[string]interface{}{
+			"phpVersion": version,
+			"enabled":    enabled,
+			"mode":       mode,
+		})
+		return
+	}
+
 	if enabled {
 		if mode == "" {
 			mode = "debug (default)"
