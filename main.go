@@ -679,6 +679,13 @@ func cmdInstall() {
 	}
 	newPath := dir + ";" + strings.Join(filtered, ";")
 
+	// Windows has a practical PATH limit. Warn if we're approaching it.
+	const maxPathLen = 2047
+	if len(newPath) > maxPathLen {
+		fmt.Fprintf(os.Stderr, "Warning: User PATH length (%d chars) exceeds the safe limit (%d).\n", len(newPath), maxPathLen)
+		fmt.Fprintf(os.Stderr, "  Some programs may not see the full PATH. Consider removing unused entries.\n")
+	}
+
 	if err := setUserPath(newPath, valType); err != nil {
 		fmt.Fprintf(os.Stderr, "Error setting User PATH: %v\n", err)
 		os.Exit(1)
@@ -1367,7 +1374,7 @@ func downloadFile(rawURL string) (string, error) {
 		return "", fmt.Errorf("HTTP %d for %s", resp.StatusCode, rawURL)
 	}
 
-	// Verify final URL after redirects is still HTTPS and on an allowed domain.
+	// Verify final URL after redirects is still HTTPS.
 	finalURL := resp.Request.URL
 	if finalURL.Scheme != "https" {
 		return "", fmt.Errorf("redirect led to non-HTTPS URL: %s", finalURL.String())
