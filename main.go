@@ -28,6 +28,12 @@ import (
 // version is set at build time via ldflags.
 var version = "dev"
 
+// verbose controls whether extra diagnostic output is printed.
+var verbose bool
+
+// quiet suppresses non-essential output.
+var quiet bool
+
 // httpClient is the shared HTTP client with a sensible timeout.
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
@@ -269,6 +275,21 @@ func rewriteXdebugArgs(args []string, version string) []string {
 }
 
 func main() {
+	// Parse global flags (--verbose, --quiet) before anything else.
+	// These are stripped from os.Args so subcommands don't see them.
+	var cleanedArgs []string
+	for _, arg := range os.Args {
+		switch arg {
+		case "--verbose":
+			verbose = true
+		case "--quiet", "-q":
+			quiet = true
+		default:
+			cleanedArgs = append(cleanedArgs, arg)
+		}
+	}
+	os.Args = cleanedArgs
+
 	// Detect if called as "composer" (multicall binary)
 	exe := strings.ToLower(filepath.Base(os.Args[0]))
 	isComposer := strings.HasPrefix(exe, "composer")
@@ -738,26 +759,117 @@ func cmdUninstall() {
 
 // cmdStatus shows the current configuration status.
 func cmdStatus() {
+	// Check for --json flag
+	jsonOutput := false
+	for _, arg := range os.Args[2:] {
+		if arg == "--json" {
+			jsonOutput = true
+		}
+	}
+
 	dir := shimDir()
 	phpShim := filepath.Join(dir, "php.exe")
 	composerShim := filepath.Join(dir, "composer.exe")
 
-	fmt.Println("shp status:")
-	fmt.Println()
-
-	// Show PHP versions (local and global)
+	// Gather status data
 	cwd, _ := os.Getwd()
 	localVersion := ""
 	if cwd != "" {
 		localVersion = findPHPVersion(cwd)
 	}
 
-	// Global = highest installed PHP under Herd
 	globalPHP, globalErr := mostRecentPHP()
 	globalVersion := ""
 	if globalErr == nil {
 		globalVersion = extractVersion(globalPHP)
 	}
+
+	// Xdebug status
+	activeVersion := localVersion
+	if activeVersion == "" {
+		activeVersion = globalVersion
+	}
+	xdebugEnabled := false
+	xdebugMode := ""
+	if activeVersion != "" {
+		nodot := strings.ReplaceAll(activeVersion, ".", "")
+		iniPath := filepath.Join(herdHome(), "php"+nodot, "php.ini")
+		if data, err := os.ReadFile(iniPath); err == nil {
+			lines := strings.Split(string(data), "\n")
+			for _, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				if strings.Contains(strings.ToLower(trimmed), "xdebug") &&
+					strings.HasPrefix(trimmed, "zend_extension") {
+					xdebugEnabled = true
+				}
+				if strings.HasPrefix(trimmed, "xdebug.mode") {
+					parts := strings.SplitN(trimmed, "=", 2)
+					if len(parts) == 2 {
+						xdebugMode = strings.TrimSpace(parts[1])
+					}
+				}
+			}
+		}
+	}
+	if xdebugEnabled && xdebugMode == "" {
+		xdebugMode = "debug"
+	}
+
+	// Shim existence
+	phpShimInstalled := false
+	if _, err := os.Stat(phpShim); err == nil {
+		phpShimInstalled = true
+	}
+	composerShimInstalled := false
+	if _, err := os.Stat(composerShim); err == nil {
+		composerShimInstalled = true
+	}
+
+	// PATH check
+	pathOK := false
+	pathError := ""
+	userPath, _, err := getUserPath()
+	if err != nil {
+		pathError = err.Error()
+	} else {
+		entries := strings.Split(userPath, ";")
+		shimIndex := -1
+		herdIndex := -1
+		herdBin := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "bin")
+		for i, e := range entries {
+			clean := strings.TrimRight(e, `\`)
+			if strings.EqualFold(clean, strings.TrimRight(dir, `\`)) {
+				shimIndex = i
+			}
+			if strings.EqualFold(clean, herdBin) {
+				herdIndex = i
+			}
+		}
+		pathOK = shimIndex != -1 && (herdIndex == -1 || shimIndex < herdIndex)
+	}
+
+	// JSON output
+	if jsonOutput {
+		status := map[string]interface{}{
+			"phpLocal":          localVersion,
+			"phpGlobal":         globalVersion,
+			"xdebugEnabled":     xdebugEnabled,
+			"xdebugMode":        xdebugMode,
+			"phpShimInstalled":  phpShimInstalled,
+			"composerShimInstalled": composerShimInstalled,
+			"shimDir":           dir,
+			"pathConfigured":    pathOK,
+			"shepherdVersion":   version,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(status)
+		return
+	}
+
+	// Human-readable output
+	fmt.Println("shp status:")
+	fmt.Println()
 
 	if localVersion != "" {
 		fmt.Printf("  PHP local:  %s (from .phpversion)\n", localVersion)
@@ -770,87 +882,31 @@ func cmdStatus() {
 		fmt.Printf("  PHP global: (not found)\n")
 	}
 
-	// Show xdebug status for the active PHP version
-	activeVersion := localVersion
-	if activeVersion == "" {
-		activeVersion = globalVersion
-	}
-	if activeVersion != "" {
-		nodot := strings.ReplaceAll(activeVersion, ".", "")
-		iniPath := filepath.Join(herdHome(), "php"+nodot, "php.ini")
-		if data, err := os.ReadFile(iniPath); err == nil {
-			lines := strings.Split(string(data), "\n")
-			enabled := false
-			mode := ""
-			for _, line := range lines {
-				trimmed := strings.TrimSpace(line)
-				if strings.Contains(strings.ToLower(trimmed), "xdebug") &&
-					strings.HasPrefix(trimmed, "zend_extension") {
-					enabled = true
-				}
-				if strings.HasPrefix(trimmed, "xdebug.mode") {
-					parts := strings.SplitN(trimmed, "=", 2)
-					if len(parts) == 2 {
-						mode = strings.TrimSpace(parts[1])
-					}
-				}
-			}
-			if enabled {
-				if mode == "" {
-					mode = "debug"
-				}
-				fmt.Printf("  Xdebug:     ✅ enabled (mode: %s)\n", mode)
-			} else {
-				fmt.Printf("  Xdebug:     ⏸️  disabled\n")
-			}
-		}
+	if xdebugEnabled {
+		fmt.Printf("  Xdebug:     ✅ enabled (mode: %s)\n", xdebugMode)
+	} else if activeVersion != "" {
+		fmt.Printf("  Xdebug:     ⏸️  disabled\n")
 	}
 	fmt.Println()
 
-	// Check if shims exist
-	if _, err := os.Stat(phpShim); err == nil {
+	if phpShimInstalled {
 		fmt.Printf("  ✓ php.exe shim installed at %s\n", phpShim)
 	} else {
 		fmt.Printf("  ✗ php.exe shim not found at %s\n", phpShim)
 	}
-	if _, err := os.Stat(composerShim); err == nil {
+	if composerShimInstalled {
 		fmt.Printf("  ✓ composer.exe shim installed at %s\n", composerShim)
 	} else {
 		fmt.Printf("  ✗ composer.exe shim not found at %s\n", composerShim)
 	}
 
-	// Check PATH
-	userPath, _, err := getUserPath()
-	if err != nil {
-		fmt.Printf("  ✗ Cannot read User PATH: %v\n", err)
-		return
-	}
-
-	entries := strings.Split(userPath, ";")
-	shimIndex := -1
-	herdIndex := -1
-	herdBin := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "bin")
-
-	for i, e := range entries {
-		clean := strings.TrimRight(e, `\`)
-		if strings.EqualFold(clean, strings.TrimRight(dir, `\`)) {
-			shimIndex = i
-		}
-		if strings.EqualFold(clean, herdBin) {
-			herdIndex = i
-		}
-	}
-
 	fmt.Println()
-	if shimIndex == -1 {
-		fmt.Printf("  ✗ %s is NOT in User PATH\n", dir)
-	} else if herdIndex == -1 {
-		fmt.Printf("  ✓ %s is in User PATH (position %d)\n", dir, shimIndex+1)
-		fmt.Printf("  ? Herd bin not found in User PATH\n")
-	} else if shimIndex < herdIndex {
-		fmt.Printf("  ✓ %s is before Herd in PATH (position %d vs %d)\n", dir, shimIndex+1, herdIndex+1)
+	if pathError != "" {
+		fmt.Printf("  ✗ Cannot read User PATH: %s\n", pathError)
+	} else if pathOK {
+		fmt.Printf("  ✓ PATH is correctly configured\n")
 	} else {
-		fmt.Printf("  ✗ %s is AFTER Herd in PATH (position %d vs %d) — run 'install' to fix\n", dir, shimIndex+1, herdIndex+1)
+		fmt.Printf("  ✗ PATH is not correctly configured — run 'shp install' to fix\n")
 	}
 }
 
