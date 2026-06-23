@@ -121,16 +121,15 @@ When the version in `.phpversion` differs from what's configured in Herd's nginx
 | Command | Description |
 |---------|-------------|
 | `shp use [version]` | Set the PHP version for the current project, or list available versions |
-| `shp install` | Install the `php`/`composer` shims and prepend them to the User PATH |
-| `shp uninstall` | Remove the shims and clean up the PATH |
-| `shp status` | Show whether the shims are installed and ordered correctly relative to Herd |
-| `shp doctor` | Diagnose common issues with Shepherd setup |
+| `shp status` | Show current PHP version and configuration |
 | `shp xdebug [mode]` | Toggle xdebug on/off for the resolved PHP version |
 | `shp ext install <name>` | Install a PHP extension from PECL |
 | `shp ext list` | List installed extensions for the resolved PHP |
+| `shp install` | Install the `php`/`composer` shims and prepend them to the User PATH |
+| `shp uninstall` | Remove the shims and clean up the PATH |
+| `shp doctor` | Diagnose common issues with Shepherd setup |
 | `shp self-update` | Update Shepherd to the latest GitHub release (with SHA256 verification) |
-| `shp version` | Show the current shp version |
-| `shp` (no args) | Print usage help |
+| `shp version` | Show the current Shepherd version |
 
 When invoked as `php`/`php.exe` or `composer`/`composer.exe`, it acts as a transparent PHP version switcher (see [Multicall binary](#multicall-binary)).
 
