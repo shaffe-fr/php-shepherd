@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows/registry"
@@ -26,6 +27,9 @@ import (
 
 // version is set at build time via ldflags.
 var version = "dev"
+
+// httpClient is the shared HTTP client with a sensible timeout.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // phpDirRe matches a Herd PHP install dir name like "php84" or "php810".
 var phpDirRe = regexp.MustCompile(`^php(\d)(\d+)$`)
@@ -358,17 +362,17 @@ func shimDir() string {
 }
 
 // getUserPath reads the User PATH from the registry.
-func getUserPath() (string, registry.Key, uint32, error) {
-	key, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE|registry.SET_VALUE)
+func getUserPath() (string, uint32, error) {
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE)
 	if err != nil {
-		return "", 0, 0, err
+		return "", 0, err
 	}
+	defer key.Close()
 	val, valType, err := key.GetStringValue("Path")
 	if err != nil {
-		key.Close()
-		return "", 0, 0, err
+		return "", 0, err
 	}
-	return val, key, valType, nil
+	return val, valType, nil
 }
 
 // setUserPath writes the User PATH to the registry preserving the original type (REG_EXPAND_SZ or REG_SZ).
@@ -397,32 +401,61 @@ func broadcastSettingChange() {
 
 // cmdInstall installs the shims and configures PATH.
 func killShimProcesses(dir string) {
-	// Use WMIC to find processes whose executable path is inside the shim directory.
+	// Use tasklist + findstr to locate processes running from the shim directory.
+	// WMIC is deprecated and removed in Windows 11 24H2+.
 	dir = strings.TrimRight(dir, `\`)
-	// Double backslashes for WMIC LIKE query
-	escapedDir := strings.ReplaceAll(dir, `\`, `\\`)
-	query := fmt.Sprintf(`Path Win32_Process Where "ExecutablePath Like '%s\\%%'"`, escapedDir)
+	dirLower := strings.ToLower(dir)
 
-	out, err := exec.Command("wmic", "process", "where",
-		fmt.Sprintf(`ExecutablePath Like '%s\\%%'`, escapedDir),
-		"get", "ProcessId", "/value").Output()
+	// Get verbose process list (includes image path)
+	out, err := exec.Command("tasklist", "/V", "/FO", "CSV", "/NH").Output()
 	if err != nil {
-		// WMIC may fail if no matching processes — that's fine
-		_ = query
 		return
 	}
 
-	// Parse PIDs from WMIC output (lines like "ProcessId=1234")
+	// Also try wmic as fallback for older systems where tasklist /V doesn't show paths
+	wmicOut, _ := exec.Command("wmic", "process", "get", "ProcessId,ExecutablePath", "/format:csv").Output()
+
+	// Build PID→path map from wmic output (best effort)
+	pidPath := make(map[int]string)
+	for _, line := range strings.Split(string(wmicOut), "\n") {
+		fields := strings.Split(strings.TrimSpace(line), ",")
+		if len(fields) >= 3 {
+			path := strings.TrimSpace(fields[1])
+			pid, err := strconv.Atoi(strings.TrimSpace(fields[2]))
+			if err == nil && path != "" {
+				pidPath[pid] = path
+			}
+		}
+	}
+
+	// Parse tasklist CSV output to get PIDs of processes with matching image names
 	myPID := os.Getpid()
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "ProcessId=") {
+		if line == "" {
 			continue
 		}
-		pidStr := strings.TrimPrefix(line, "ProcessId=")
-		pid, err := strconv.Atoi(strings.TrimSpace(pidStr))
+		// CSV format: "Image Name","PID",...
+		fields := strings.Split(line, ",")
+		if len(fields) < 2 {
+			continue
+		}
+		imageName := strings.Trim(fields[0], `"`)
+		imageNameLower := strings.ToLower(imageName)
+		// Only consider our shim executables
+		if imageNameLower != "php.exe" && imageNameLower != "composer.exe" && imageNameLower != "shp.exe" {
+			continue
+		}
+		pidStr := strings.Trim(fields[1], `"`)
+		pid, err := strconv.Atoi(pidStr)
 		if err != nil || pid == myPID {
 			continue
+		}
+		// If we have path info from wmic, verify it's in our shim dir
+		if p, ok := pidPath[pid]; ok {
+			if !strings.HasPrefix(strings.ToLower(p), dirLower+`\`) {
+				continue
+			}
 		}
 		proc, err := os.FindProcess(pid)
 		if err != nil {
@@ -486,7 +519,7 @@ func cmdInstall() {
 	}
 
 	// Configure User PATH
-	userPath, _, valType, err := getUserPath()
+	userPath, valType, err := getUserPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading User PATH: %v\n", err)
 		os.Exit(1)
@@ -526,7 +559,7 @@ func cmdUninstall() {
 	}
 
 	// Remove from User PATH
-	userPath, _, valType, err := getUserPath()
+	userPath, valType, err := getUserPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading User PATH: %v\n", err)
 		os.Exit(1)
@@ -636,7 +669,7 @@ func cmdStatus() {
 	}
 
 	// Check PATH
-	userPath, _, _, err := getUserPath()
+	userPath, _, err := getUserPath()
 	if err != nil {
 		fmt.Printf("  ✗ Cannot read User PATH: %v\n", err)
 		return
@@ -1097,7 +1130,7 @@ func detectPeclVersion(extName string) (string, error) {
 	}
 
 	peclURL := "https://pecl.php.net/package/" + extName
-	resp, err := http.Get(peclURL)
+	resp, err := httpClient.Get(peclURL)
 	if err != nil {
 		return "", fmt.Errorf("cannot reach pecl.php.net: %w", err)
 	}
@@ -1135,7 +1168,7 @@ func downloadFile(rawURL string) (string, error) {
 		return "", fmt.Errorf("refusing non-HTTPS URL: %s", rawURL)
 	}
 
-	resp, err := http.Get(rawURL)
+	resp, err := httpClient.Get(rawURL)
 	if err != nil {
 		return "", err
 	}
@@ -1419,7 +1452,7 @@ func cmdDoctor() {
 	}
 
 	// 3. Check PATH order (User PATH from registry)
-	userPath, _, _, pathErr := getUserPath()
+	userPath, _, pathErr := getUserPath()
 	if pathErr != nil {
 		fmt.Printf("  ✗ Cannot read User PATH: %v\n", pathErr)
 		issues++
@@ -1600,7 +1633,7 @@ func cmdSelfUpdate() {
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", "shepherd/"+version)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error contacting GitHub: %v\n", err)
 		os.Exit(1)
@@ -1754,7 +1787,7 @@ func validateDownloadURL(rawURL string) error {
 // verifyChecksum downloads the checksums.txt and verifies the SHA256 of the local file.
 func verifyChecksum(filePath, fileName, checksumURL string) error {
 	// Download checksums.txt
-	resp, err := http.Get(checksumURL)
+	resp, err := httpClient.Get(checksumURL)
 	if err != nil {
 		return fmt.Errorf("cannot download checksums: %w", err)
 	}
@@ -1810,6 +1843,9 @@ func verifyChecksum(filePath, fileName, checksumURL string) error {
 }
 
 // extractBinaryFromZip extracts a named file from a zip to a temp file.
+// Extraction is limited to maxBinarySize to prevent zip bomb attacks.
+const maxBinarySize = 50 * 1024 * 1024 // 50 MB
+
 func extractBinaryFromZip(zipPath, fileName string) (string, error) {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
@@ -1819,6 +1855,10 @@ func extractBinaryFromZip(zipPath, fileName string) (string, error) {
 
 	for _, f := range r.File {
 		if strings.EqualFold(filepath.Base(f.Name), fileName) {
+			if f.UncompressedSize64 > maxBinarySize {
+				return "", fmt.Errorf("%s is too large (%d bytes, max %d)", fileName, f.UncompressedSize64, maxBinarySize)
+			}
+
 			rc, err := f.Open()
 			if err != nil {
 				return "", err
@@ -1830,10 +1870,17 @@ func extractBinaryFromZip(zipPath, fileName string) (string, error) {
 				return "", err
 			}
 
-			if _, err := io.Copy(tmpFile, rc); err != nil {
+			limited := io.LimitReader(rc, maxBinarySize+1)
+			n, err := io.Copy(tmpFile, limited)
+			if err != nil {
 				tmpFile.Close()
 				os.Remove(tmpFile.Name())
 				return "", err
+			}
+			if n > maxBinarySize {
+				tmpFile.Close()
+				os.Remove(tmpFile.Name())
+				return "", fmt.Errorf("%s exceeds maximum allowed size (%d MB)", fileName, maxBinarySize/(1024*1024))
 			}
 			tmpFile.Close()
 			return tmpFile.Name(), nil
