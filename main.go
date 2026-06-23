@@ -213,7 +213,7 @@ func syncNginx(projectDir, version string) {
 		return
 	}
 
-	// Restart nginx via herd.phar (non-blocking, using a direct php.exe)
+	// Restart nginx via herd.phar (detached process, non-blocking).
 	bootstrap, err := mostRecentPHP()
 	if err != nil {
 		return
@@ -222,11 +222,18 @@ func syncNginx(projectDir, version string) {
 	cmd := exec.Command(bootstrap, herdPhar, "restart", "nginx")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000} // CREATE_NO_WINDOW
-	_ = cmd.Start()
+	// CREATE_NO_WINDOW | DETACHED_PROCESS: the child process runs independently
+	// and won't be affected if the parent exits immediately after.
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000 | 0x00000008}
+	if err := cmd.Start(); err == nil {
+		// Release the process handle so it can outlive us without leaking handles.
+		_ = cmd.Process.Release()
+	}
 }
 
 // rewriteXdebugArgs rewrites xdebug DLL paths and strips -n flag.
+// Only rewrites arguments that reference the xdebug directory or contain
+// a zend_extension directive pointing to an xdebug DLL.
 func rewriteXdebugArgs(args []string, version string) []string {
 	// Without a known version we can't build a valid DLL name; only strip -n.
 	if version == "" {
@@ -240,6 +247,7 @@ func rewriteXdebugArgs(args []string, version string) []string {
 		return result
 	}
 	xdebugDir := filepath.Join(os.Getenv("PROGRAMFILES"), "Herd", "resources", "app.asar.unpacked", "resources", "bin", "xdebug")
+	xdebugDirLower := strings.ToLower(xdebugDir)
 	dlls, _ := filepath.Glob(filepath.Join(xdebugDir, "xdebug-*.dll"))
 
 	var result []string
@@ -247,9 +255,13 @@ func rewriteXdebugArgs(args []string, version string) []string {
 		if arg == "-n" {
 			continue
 		}
-		for _, dll := range dlls {
-			dllName := filepath.Base(dll)
-			arg = strings.ReplaceAll(arg, dllName, "xdebug-"+version+".dll")
+		// Only rewrite args that actually reference the xdebug directory
+		// (e.g. -d zend_extension=C:\...\xdebug\xdebug-8.3.dll)
+		if strings.Contains(strings.ToLower(arg), xdebugDirLower) || strings.Contains(strings.ToLower(arg), "xdebug") && strings.Contains(arg, "zend_extension") {
+			for _, dll := range dlls {
+				dllName := filepath.Base(dll)
+				arg = strings.ReplaceAll(arg, dllName, "xdebug-"+version+".dll")
+			}
 		}
 		result = append(result, arg)
 	}
@@ -481,8 +493,9 @@ func cmdUse() {
 
 	ver := os.Args[2]
 
-	// Normalize: allow "84" as shorthand for "8.4"
-	if !strings.Contains(ver, ".") && len(ver) >= 2 {
+	// Normalize: allow "84" or "810" as shorthand for "8.4" or "8.10"
+	// Only accept 2-3 digit shorthands (major is always single digit for PHP).
+	if !strings.Contains(ver, ".") && len(ver) >= 2 && len(ver) <= 3 {
 		ver = ver[:1] + "." + ver[1:]
 	}
 
