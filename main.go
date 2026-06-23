@@ -479,6 +479,68 @@ func cmdStatus() {
 	fmt.Println("flock status:")
 	fmt.Println()
 
+	// Show PHP versions (local and global)
+	cwd, _ := os.Getwd()
+	localVersion := ""
+	if cwd != "" {
+		localVersion = findPHPVersion(cwd)
+	}
+
+	// Global = highest installed PHP under Herd
+	globalPHP, globalErr := mostRecentPHP()
+	globalVersion := ""
+	if globalErr == nil {
+		globalVersion = extractVersion(globalPHP)
+	}
+
+	if localVersion != "" {
+		fmt.Printf("  PHP local:  %s (from .phpversion)\n", localVersion)
+	} else {
+		fmt.Printf("  PHP local:  (none — no .phpversion found)\n")
+	}
+	if globalVersion != "" {
+		fmt.Printf("  PHP global: %s\n", globalVersion)
+	} else {
+		fmt.Printf("  PHP global: (not found)\n")
+	}
+
+	// Show xdebug status for the active PHP version
+	activeVersion := localVersion
+	if activeVersion == "" {
+		activeVersion = globalVersion
+	}
+	if activeVersion != "" {
+		nodot := strings.ReplaceAll(activeVersion, ".", "")
+		iniPath := filepath.Join(herdHome(), "php"+nodot, "php.ini")
+		if data, err := os.ReadFile(iniPath); err == nil {
+			lines := strings.Split(string(data), "\n")
+			enabled := false
+			mode := ""
+			for _, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				if strings.Contains(strings.ToLower(trimmed), "xdebug") &&
+					strings.HasPrefix(trimmed, "zend_extension") {
+					enabled = true
+				}
+				if strings.HasPrefix(trimmed, "xdebug.mode") {
+					parts := strings.SplitN(trimmed, "=", 2)
+					if len(parts) == 2 {
+						mode = strings.TrimSpace(parts[1])
+					}
+				}
+			}
+			if enabled {
+				if mode == "" {
+					mode = "debug"
+				}
+				fmt.Printf("  Xdebug:     ✅ enabled (mode: %s)\n", mode)
+			} else {
+				fmt.Printf("  Xdebug:     ⏸️  disabled\n")
+			}
+		}
+	}
+	fmt.Println()
+
 	// Check if shims exist
 	if _, err := os.Stat(phpShim); err == nil {
 		fmt.Printf("  ✓ php.exe shim installed at %s\n", phpShim)
