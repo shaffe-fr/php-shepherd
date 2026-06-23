@@ -258,6 +258,9 @@ func main() {
 	if isShepherd {
 		if len(os.Args) > 1 {
 			switch os.Args[1] {
+			case "use":
+				cmdUse()
+				return
 			case "install":
 				cmdInstall()
 				return
@@ -287,6 +290,7 @@ func main() {
 		fmt.Println("Shepherd - Per-project PHP on Windows, done right.")
 		fmt.Println()
 		fmt.Println("Commands:")
+		fmt.Println("  use         Set the PHP version for the current project (.phpversion)")
 		fmt.Println("  install     Install php.exe and composer.exe shims and configure PATH")
 		fmt.Println("  uninstall   Remove shims and restore PATH")
 		fmt.Println("  status      Show current PATH configuration status")
@@ -414,6 +418,91 @@ func broadcastSettingChange() {
 	env, _ := syscall.UTF16PtrFromString("Environment")
 	// HWND_BROADCAST=0xFFFF, WM_SETTINGCHANGE=0x001A, SMTO_ABORTIFHUNG=0x0002
 	sendMessageTimeout.Call(0xFFFF, 0x001A, 0, uintptr(unsafe.Pointer(env)), 0x0002, 5000, 0)
+}
+
+// cmdUse sets or displays the PHP version for the current project.
+// Without arguments, lists available PHP versions.
+// With a version argument, writes it to .phpversion in the current directory.
+func cmdUse() {
+	if len(os.Args) < 3 {
+		// List available PHP versions
+		pattern := filepath.Join(herdHome(), "php*")
+		matches, err := filepath.Glob(pattern)
+		if err != nil || len(matches) == 0 {
+			fmt.Fprintf(os.Stderr, "No PHP versions found in %s\n", herdHome())
+			os.Exit(1)
+		}
+
+		// Sort by version ascending
+		sort.Slice(matches, func(i, j int) bool {
+			return phpDirVersion(matches[i]) < phpDirVersion(matches[j])
+		})
+
+		// Determine current version for highlighting
+		cwd, _ := os.Getwd()
+		currentVersion := ""
+		if cwd != "" {
+			currentVersion = findPHPVersion(cwd)
+		}
+
+		fmt.Println("Available PHP versions:")
+		fmt.Println()
+		for _, m := range matches {
+			dirName := filepath.Base(m)
+			v := phpDirVersion(m)
+			if v < 0 {
+				continue
+			}
+			// Check php.exe exists
+			if _, err := os.Stat(filepath.Join(m, "php.exe")); err != nil {
+				continue
+			}
+			dm := phpDirRe.FindStringSubmatch(dirName)
+			if len(dm) != 3 {
+				continue
+			}
+			ver := dm[1] + "." + dm[2]
+			if ver == currentVersion {
+				fmt.Printf("  → %s (active)\n", ver)
+			} else {
+				fmt.Printf("    %s\n", ver)
+			}
+		}
+		return
+	}
+
+	ver := os.Args[2]
+
+	// Normalize: allow "84" as shorthand for "8.4"
+	if !strings.Contains(ver, ".") && len(ver) >= 2 {
+		ver = ver[:1] + "." + ver[1:]
+	}
+
+	if !versionRe.MatchString(ver) {
+		fmt.Fprintf(os.Stderr, "Error: invalid version format %q (expected X.Y, e.g. 8.4)\n", os.Args[2])
+		os.Exit(1)
+	}
+
+	// Validate that this version is installed
+	if _, err := resolveFromVersion(ver); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Write .phpversion in current directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	target := filepath.Join(cwd, ".phpversion")
+	if err := os.WriteFile(target, []byte(ver+"\n"), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", target, err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("  ✓ .phpversion set to %s\n", ver)
 }
 
 // cmdInstall installs the shims and configures PATH.

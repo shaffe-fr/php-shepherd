@@ -120,6 +120,7 @@ When the version in `.phpversion` differs from what's configured in Herd's nginx
 
 | Command | Description |
 |---------|-------------|
+| `shp use [version]` | Set the PHP version for the current project, or list available versions |
 | `shp install` | Install the `php`/`composer` shims and prepend them to the User PATH |
 | `shp uninstall` | Remove the shims and clean up the PATH |
 | `shp status` | Show whether the shims are installed and ordered correctly relative to Herd |
