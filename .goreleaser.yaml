@@ -16,7 +16,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w
+      - -s -w -X main.version={{ .Version }}
 
 archives:
   - id: default
@@ -29,6 +29,17 @@ archives:
 
 checksum:
   name_template: "checksums.txt"
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    args:
+      - "sign-blob"
+      - "--yes"
+      - "--oidc-issuer=https://token.actions.githubusercontent.com"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
 
 changelog:
   sort: asc

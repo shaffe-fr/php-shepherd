@@ -2,14 +2,18 @@ package main
 
 import (
 	"archive/zip"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +22,9 @@ import (
 
 	"golang.org/x/sys/windows/registry"
 )
+
+// version is set at build time via ldflags.
+var version = "dev"
 
 // phpDirRe matches a Herd PHP install dir name like "php84" or "php810".
 var phpDirRe = regexp.MustCompile(`^php(\d)(\d+)$`)
@@ -242,6 +249,12 @@ func main() {
 			case "ext":
 				cmdExt()
 				return
+			case "self-update":
+				cmdSelfUpdate()
+				return
+			case "version", "--version", "-v":
+				fmt.Printf("flock %s\n", version)
+				return
 			}
 		}
 		fmt.Println("flock - Per-project PHP on Windows, done right.")
@@ -252,6 +265,8 @@ func main() {
 		fmt.Println("  status      Show current PATH configuration status")
 		fmt.Println("  xdebug      Toggle xdebug on/off for the current PHP version")
 		fmt.Println("  ext         Install PHP extensions from PECL")
+		fmt.Println("  self-update Update flock to the latest version")
+		fmt.Println("  version     Show current flock version")
 		fmt.Println()
 		fmt.Println("When invoked as php.exe or composer.exe, acts as a transparent PHP version switcher.")
 		return
@@ -1008,8 +1023,14 @@ func cmdExtInstall() {
 
 // detectPeclVersion scrapes pecl.php.net to find the latest stable version.
 func detectPeclVersion(extName string) (string, error) {
-	url := "https://pecl.php.net/package/" + extName
-	resp, err := http.Get(url)
+	// Validate extension name to prevent URL injection.
+	extNameRe := regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
+	if !extNameRe.MatchString(extName) {
+		return "", fmt.Errorf("invalid extension name: %q", extName)
+	}
+
+	peclURL := "https://pecl.php.net/package/" + extName
+	resp, err := http.Get(peclURL)
 	if err != nil {
 		return "", fmt.Errorf("cannot reach pecl.php.net: %w", err)
 	}
@@ -1019,7 +1040,7 @@ func detectPeclVersion(extName string) (string, error) {
 		return "", fmt.Errorf("extension %q not found on pecl.php.net (HTTP %d)", extName, resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if err != nil {
 		return "", fmt.Errorf("error reading pecl page: %w", err)
 	}
@@ -1034,15 +1055,33 @@ func detectPeclVersion(extName string) (string, error) {
 }
 
 // downloadFile downloads a URL to a temp file and returns the path.
-func downloadFile(url string) (string, error) {
-	resp, err := http.Get(url)
+// Downloads are limited to maxDownloadSize bytes to prevent resource exhaustion.
+const maxDownloadSize = 100 * 1024 * 1024 // 100 MB
+
+func downloadFile(rawURL string) (string, error) {
+	// Validate URL scheme — only HTTPS is allowed.
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL: %w", err)
+	}
+	if parsed.Scheme != "https" {
+		return "", fmt.Errorf("refusing non-HTTPS URL: %s", rawURL)
+	}
+
+	resp, err := http.Get(rawURL)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("HTTP %d for %s", resp.StatusCode, url)
+		return "", fmt.Errorf("HTTP %d for %s", resp.StatusCode, rawURL)
+	}
+
+	// Verify final URL after redirects is still HTTPS and on an allowed domain.
+	finalURL := resp.Request.URL
+	if finalURL.Scheme != "https" {
+		return "", fmt.Errorf("redirect led to non-HTTPS URL: %s", finalURL.String())
 	}
 
 	tmpFile, err := os.CreateTemp("", "flock-ext-*.zip")
@@ -1050,11 +1089,17 @@ func downloadFile(url string) (string, error) {
 		return "", err
 	}
 
-	_, err = io.Copy(tmpFile, resp.Body)
+	// Limit download size to prevent disk exhaustion.
+	limited := io.LimitReader(resp.Body, maxDownloadSize+1)
+	n, err := io.Copy(tmpFile, limited)
 	tmpFile.Close()
 	if err != nil {
 		os.Remove(tmpFile.Name())
 		return "", err
+	}
+	if n > maxDownloadSize {
+		os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("download exceeds maximum size (%d MB)", maxDownloadSize/(1024*1024))
 	}
 	return tmpFile.Name(), nil
 }
@@ -1078,7 +1123,15 @@ func installExtFiles(zipPath, extName, phpDir, extDir string) (bool, error) {
 			continue
 		}
 
-		name := path.Base(f.Name)
+		// Use filepath.Base to correctly handle both / and \ on Windows,
+		// preventing zip-slip attacks with crafted entry names.
+		name := filepath.Base(filepath.FromSlash(f.Name))
+
+		// Reject any entry that resolves to a parent traversal or empty name.
+		if name == "." || name == ".." || name == "" {
+			continue
+		}
+
 		lowerName := strings.ToLower(name)
 
 		var destDir string
@@ -1095,6 +1148,12 @@ func installExtFiles(zipPath, extName, phpDir, extDir string) (bool, error) {
 		}
 
 		destPath := filepath.Join(destDir, name)
+
+		// Final zip-slip guard: ensure destination stays within allowed directory.
+		if !strings.HasPrefix(destPath, filepath.Clean(destDir)+string(os.PathSeparator)) {
+			return false, fmt.Errorf("zip entry %q escapes target directory", f.Name)
+		}
+
 		if err := extractZipFile(f, destPath); err != nil {
 			return false, fmt.Errorf("extracting %s: %w", name, err)
 		}
@@ -1220,4 +1279,313 @@ func cmdExtList() {
 		}
 	}
 	fmt.Printf("\n%d extension(s) installed.\n", count)
+}
+
+// githubRelease represents a GitHub release API response.
+type githubRelease struct {
+	TagName string        `json:"tag_name"`
+	Assets  []githubAsset `json:"assets"`
+}
+
+// githubAsset represents a release asset.
+type githubAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+}
+
+const githubRepo = "shaffe-fr/php-flock"
+
+// allowedDownloadHosts lists the GitHub domains from which self-update assets may be downloaded.
+var allowedDownloadHosts = map[string]bool{
+	"github.com":               true,
+	"objects.githubusercontent.com": true,
+}
+
+// cmdSelfUpdate checks for a newer release on GitHub and updates the binary.
+func cmdSelfUpdate() {
+	fmt.Printf("flock %s\n", version)
+	fmt.Println("Checking for updates...")
+
+	// Fetch latest release from GitHub API
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", githubRepo)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("User-Agent", "flock/"+version)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error contacting GitHub: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		fmt.Fprintf(os.Stderr, "Error: GitHub API returned HTTP %d\n", resp.StatusCode)
+		os.Exit(1)
+	}
+
+	// Limit API response to 1MB to prevent resource exhaustion.
+	var release githubRelease
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1024*1024)).Decode(&release); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing release info: %v\n", err)
+		os.Exit(1)
+	}
+
+	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	currentVersion := strings.TrimPrefix(version, "v")
+
+	if latestVersion == currentVersion {
+		fmt.Printf("Already up to date (%s).\n", version)
+		return
+	}
+
+	fmt.Printf("New version available: %s → %s\n", currentVersion, latestVersion)
+
+	// Find the right asset for this OS/arch
+	arch := runtime.GOARCH
+	assetName := fmt.Sprintf("php-flock_%s_windows_%s.zip", latestVersion, arch)
+
+	var downloadURL string
+	var checksumURL string
+	var hasCosignSig bool
+	for _, asset := range release.Assets {
+		if strings.EqualFold(asset.Name, assetName) {
+			downloadURL = asset.BrowserDownloadURL
+		}
+		if strings.EqualFold(asset.Name, "checksums.txt") {
+			checksumURL = asset.BrowserDownloadURL
+		}
+		if strings.EqualFold(asset.Name, "checksums.txt.sig") {
+			hasCosignSig = true
+		}
+	}
+
+	if downloadURL == "" {
+		fmt.Fprintf(os.Stderr, "Error: no release asset found for %s\n", assetName)
+		fmt.Fprintf(os.Stderr, "Available assets:\n")
+		for _, asset := range release.Assets {
+			fmt.Fprintf(os.Stderr, "  - %s\n", asset.Name)
+		}
+		os.Exit(1)
+	}
+
+	// Validate download URL domain to prevent supply-chain redirect attacks.
+	if err := validateDownloadURL(downloadURL); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Downloading %s...\n", assetName)
+
+	// Download the zip
+	zipPath, err := downloadFile(downloadURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error downloading update: %v\n", err)
+		os.Exit(1)
+	}
+	defer os.Remove(zipPath)
+
+	// Verify checksum (mandatory — goreleaser always produces checksums.txt).
+	if checksumURL == "" {
+		fmt.Fprintf(os.Stderr, "Error: no checksums.txt found in release — refusing to install unverified binary\n")
+		os.Exit(1)
+	}
+	if err := validateDownloadURL(checksumURL); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: checksum URL validation failed: %v\n", err)
+		os.Exit(1)
+	}
+	if err := verifyChecksum(zipPath, assetName, checksumURL); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: checksum verification failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "The downloaded file may have been tampered with.\n")
+		os.Exit(1)
+	}
+	fmt.Println("Checksum verified ✓")
+	if hasCosignSig {
+		fmt.Println("Cosign signature present ✓ (verify with: cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.sig checksums.txt)")
+	}
+
+	// Extract flock.exe from the zip
+	newBinary, err := extractBinaryFromZip(zipPath, "flock.exe")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error extracting update: %v\n", err)
+		os.Exit(1)
+	}
+	defer os.Remove(newBinary)
+
+	// Replace the current executable and all shims
+	self, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error finding own executable: %v\n", err)
+		os.Exit(1)
+	}
+	self, _ = filepath.EvalSymlinks(self)
+
+	if err := replaceBinary(self, newBinary); err != nil {
+		fmt.Fprintf(os.Stderr, "Error replacing binary: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("  ✓ Updated %s\n", self)
+
+	// Also update shims if they exist
+	dir := shimDir()
+	for _, name := range []string{"php.exe", "composer.exe", "flock.exe"} {
+		shimPath := filepath.Join(dir, name)
+		if strings.EqualFold(shimPath, self) {
+			continue // Already updated
+		}
+		if _, err := os.Stat(shimPath); err == nil {
+			newCopy, err := extractBinaryFromZip(zipPath, "flock.exe")
+			if err == nil {
+				if err := replaceBinary(shimPath, newCopy); err == nil {
+					fmt.Printf("  ✓ Updated %s\n", shimPath)
+				}
+				os.Remove(newCopy)
+			}
+		}
+	}
+
+	fmt.Printf("\n✅ flock updated to %s\n", latestVersion)
+}
+
+// validateDownloadURL ensures the URL points to an allowed GitHub host.
+func validateDownloadURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid download URL: %w", err)
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("download URL must be HTTPS, got: %s", parsed.Scheme)
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if !allowedDownloadHosts[host] {
+		return fmt.Errorf("download URL host %q is not in allowlist", host)
+	}
+	return nil
+}
+
+// verifyChecksum downloads the checksums.txt and verifies the SHA256 of the local file.
+func verifyChecksum(filePath, fileName, checksumURL string) error {
+	// Download checksums.txt
+	resp, err := http.Get(checksumURL)
+	if err != nil {
+		return fmt.Errorf("cannot download checksums: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("checksums.txt returned HTTP %d", resp.StatusCode)
+	}
+
+	// Read checksums (limit to 1MB to prevent abuse)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil {
+		return fmt.Errorf("error reading checksums: %w", err)
+	}
+
+	// Parse checksums.txt — format: "<sha256>  <filename>"
+	var expectedHash string
+	for _, line := range strings.Split(string(body), "\n") {
+		parts := strings.Fields(line)
+		if len(parts) == 2 && strings.EqualFold(parts[1], fileName) {
+			expectedHash = strings.ToLower(parts[0])
+			break
+		}
+	}
+
+	if expectedHash == "" {
+		return fmt.Errorf("no checksum found for %s in checksums.txt", fileName)
+	}
+
+	// Validate hex format
+	if len(expectedHash) != 64 {
+		return fmt.Errorf("invalid checksum length for %s", fileName)
+	}
+
+	// Compute actual hash
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("cannot open file for checksum: %w", err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("error computing hash: %w", err)
+	}
+	actualHash := hex.EncodeToString(h.Sum(nil))
+
+	if actualHash != expectedHash {
+		return fmt.Errorf("SHA256 mismatch: expected %s, got %s", expectedHash, actualHash)
+	}
+
+	return nil
+}
+
+// extractBinaryFromZip extracts a named file from a zip to a temp file.
+func extractBinaryFromZip(zipPath, fileName string) (string, error) {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		if strings.EqualFold(filepath.Base(f.Name), fileName) {
+			rc, err := f.Open()
+			if err != nil {
+				return "", err
+			}
+			defer rc.Close()
+
+			tmpFile, err := os.CreateTemp("", "flock-update-*.exe")
+			if err != nil {
+				return "", err
+			}
+
+			if _, err := io.Copy(tmpFile, rc); err != nil {
+				tmpFile.Close()
+				os.Remove(tmpFile.Name())
+				return "", err
+			}
+			tmpFile.Close()
+			return tmpFile.Name(), nil
+		}
+	}
+	return "", fmt.Errorf("%s not found in archive", fileName)
+}
+
+// replaceBinary replaces the target executable with the new one.
+// On Windows, we can't overwrite a running binary, so we rename the old one first.
+func replaceBinary(target, newBinary string) error {
+	oldPath := target + ".old"
+
+	// Remove any previous .old file
+	os.Remove(oldPath)
+
+	// Rename current binary to .old
+	if err := os.Rename(target, oldPath); err != nil {
+		return fmt.Errorf("cannot rename %s: %w", target, err)
+	}
+
+	// Copy new binary to target path
+	data, err := os.ReadFile(newBinary)
+	if err != nil {
+		// Rollback
+		os.Rename(oldPath, target)
+		return fmt.Errorf("cannot read new binary: %w", err)
+	}
+
+	if err := os.WriteFile(target, data, 0755); err != nil {
+		// Rollback
+		os.Rename(oldPath, target)
+		return fmt.Errorf("cannot write new binary: %w", err)
+	}
+
+	// Clean up old binary (best effort, may fail if still running)
+	os.Remove(oldPath)
+	return nil
 }

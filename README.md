@@ -79,9 +79,33 @@ Copy-Item flock.exe "$dest\composer.exe"
 ### From source
 
 ```powershell
-go build -ldflags="-s -w" -o flock.exe .
+go build -ldflags="-s -w -X main.version=dev" -o flock.exe .
 .\flock.exe install
 ```
+
+## Usage
+
+Create a `.phpversion` file in your project root:
+
+```
+8.4
+```
+
+Then use `php` and `composer` as usual — the correct version is resolved automatically:
+
+```powershell
+cd my-project
+php -v             # → PHP 8.4.x
+php artisan        # → uses PHP 8.4
+composer install   # → uses PHP 8.4
+
+cd ../other-project  # has .phpversion containing "8.5"
+php -v             # → PHP 8.5.x
+```
+
+If no `.phpversion` is found while walking up the tree, flock falls back to asking Herd directly via `herd.phar which-php`.
+
+When the version in `.phpversion` differs from what's configured in Herd's nginx, flock updates the config and restarts nginx in the background — so your local `.test` domain always matches.
 
 ## Commands
 
@@ -93,9 +117,33 @@ go build -ldflags="-s -w" -o flock.exe .
 | `flock xdebug [mode]` | Toggle xdebug on/off for the resolved PHP version |
 | `flock ext install <name>` | Install a PHP extension from PECL |
 | `flock ext list` | List installed extensions for the resolved PHP |
+| `flock self-update` | Update flock to the latest GitHub release (with SHA256 verification) |
+| `flock version` | Show the current flock version |
 | `flock` (no args) | Print usage help |
 
-When invoked as `php`/`php.exe` or `composer`/`composer.exe`, it acts as a transparent PHP version switcher (see below).
+When invoked as `php`/`php.exe` or `composer`/`composer.exe`, it acts as a transparent PHP version switcher (see [Multicall binary](#multicall-binary)).
+
+## Self-update
+
+Update flock to the latest version with a single command:
+
+```powershell
+flock self-update
+```
+
+This will:
+
+1. Check the latest release on GitHub
+2. Download the matching archive for your architecture
+3. **Verify the SHA256 checksum** against `checksums.txt` from the release (mandatory — update is refused if verification fails)
+4. Replace the current binary and all installed shims
+
+Downloads are restricted to HTTPS on known GitHub domains only. Releases are signed with [cosign](https://docs.sigstore.dev) (Sigstore keyless) — see [SECURITY.md](SECURITY.md) for manual verification instructions.
+
+```powershell
+flock version       # show current version
+flock self-update   # update to latest
+```
 
 ## Xdebug management
 
@@ -167,30 +215,6 @@ flock ext list
 6. Adds `extension=<name>` (or `zend_extension=` for xdebug/opcache) to `php.ini`
 7. Verifies the extension loads via `php -m`
 
-## Usage
-
-Create a `.phpversion` file in your project root:
-
-```
-8.4
-```
-
-Then use `php` and `composer` as usual — the correct version is resolved automatically:
-
-```powershell
-cd my-project
-php -v             # → PHP 8.4.x
-php artisan        # → uses PHP 8.4
-composer install   # → uses PHP 8.4
-
-cd ../other-project  # has .phpversion containing "8.5"
-php -v             # → PHP 8.5.x
-```
-
-If no `.phpversion` is found while walking up the tree, flock falls back to asking Herd directly via `herd.phar which-php`.
-
-When the version in `.phpversion` differs from what's configured in Herd's nginx, flock updates the config and restarts nginx in the background — so your local `.test` domain always matches.
-
 ## Multicall binary
 
 The binary detects how it was invoked via its filename:
@@ -199,7 +223,7 @@ The binary detects how it was invoked via its filename:
 |-----------|----------|
 | `php` or `php.exe` | Runs PHP with your arguments |
 | `composer` or `composer.exe` | Runs `composer.phar` via the resolved PHP |
-| `flock.exe` | Management commands (`install`/`uninstall`/`status`/`xdebug`/`ext`) |
+| `flock.exe` | Management commands (`install`/`uninstall`/`status`/`xdebug`/`ext`/`self-update`) |
 
 This means you only need one binary — the `install` command sets up all three names for you.
 
