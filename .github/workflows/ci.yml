@@ -27,7 +27,7 @@ jobs:
         run: go vet ./...
 
       - name: Build
-        run: go build -ldflags="-s -w" -o flock.exe .
+        run: go build -ldflags="-s -w" -o shp.exe .
 
       - name: Smoke test
-        run: .\flock.exe
+        run: .\shp.exe

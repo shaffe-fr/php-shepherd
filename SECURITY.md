@@ -2,7 +2,7 @@
 
 ## Reporting vulnerabilities
 
-If you discover a security vulnerability, please report it privately via [GitHub Security Advisories](https://github.com/shaffe-fr/php-flock/security/advisories/new) rather than opening a public issue.
+If you discover a security vulnerability, please report it privately via [GitHub Security Advisories](https://github.com/shaffe-fr/php-shepherd/security/advisories/new) rather than opening a public issue.
 
 ## Release integrity
 
@@ -13,7 +13,7 @@ All release artifacts are built in GitHub Actions and include cryptographic veri
 
 ### Self-update verification
 
-`flock self-update` automatically verifies the SHA256 checksum of downloaded archives before installing. If the checksum doesn't match, the update is refused.
+`shp self-update` automatically verifies the SHA256 checksum of downloaded archives before installing. If the checksum doesn't match, the update is refused.
 
 ### Manual verification
 
@@ -26,7 +26,7 @@ cosign verify-blob \
   --certificate checksums.txt.pem \
   --signature checksums.txt.sig \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp "github\.com/shaffe-fr/php-flock" \
+  --certificate-identity-regexp "github\.com/shaffe-fr/php-shepherd" \
   checksums.txt
 ```
 
@@ -36,7 +36,7 @@ This proves the checksums file was produced by the official GitHub Actions workf
 
 ```powershell
 # PowerShell
-(Get-FileHash php-flock_*_windows_amd64.zip -Algorithm SHA256).Hash
+(Get-FileHash php-shepherd_*_windows_amd64.zip -Algorithm SHA256).Hash
 # Compare with the corresponding line in checksums.txt
 ```
 

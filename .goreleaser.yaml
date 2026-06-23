@@ -5,8 +5,8 @@ before:
     - go mod tidy
 
 builds:
-  - id: flock
-    binary: flock
+  - id: shepherd
+    binary: shp
     env:
       - CGO_ENABLED=0
     mod_timestamp: "{{ .CommitTimestamp }}"

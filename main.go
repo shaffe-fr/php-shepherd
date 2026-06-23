@@ -233,10 +233,10 @@ func main() {
 	// Detect if called as "composer" (multicall binary)
 	exe := strings.ToLower(filepath.Base(os.Args[0]))
 	isComposer := strings.HasPrefix(exe, "composer")
-	isFlock := strings.HasPrefix(exe, "flock")
+	isShepherd := strings.HasPrefix(exe, "shp")
 
-	// Handle subcommands (only when invoked as flock)
-	if isFlock {
+	// Handle subcommands (only when invoked as shp)
+	if isShepherd {
 		if len(os.Args) > 1 {
 			switch os.Args[1] {
 			case "install":
@@ -261,21 +261,21 @@ func main() {
 				cmdDoctor()
 				return
 			case "version", "--version", "-v":
-				fmt.Printf("flock %s\n", version)
+				fmt.Printf("shp %s\n", version)
 				return
 			}
 		}
-		fmt.Println("flock - Per-project PHP on Windows, done right.")
+		fmt.Println("Shepherd - Per-project PHP on Windows, done right.")
 		fmt.Println()
 		fmt.Println("Commands:")
 		fmt.Println("  install     Install php.exe and composer.exe shims and configure PATH")
 		fmt.Println("  uninstall   Remove shims and restore PATH")
 		fmt.Println("  status      Show current PATH configuration status")
-		fmt.Println("  doctor      Diagnose common issues with flock setup")
+		fmt.Println("  doctor      Diagnose common issues with Shepherd setup")
 		fmt.Println("  xdebug      Toggle xdebug on/off for the current PHP version")
 		fmt.Println("  ext         Install PHP extensions from PECL")
-		fmt.Println("  self-update Update flock to the latest version")
-		fmt.Println("  version     Show current flock version")
+		fmt.Println("  self-update Update Shepherd to the latest version")
+		fmt.Println("  version     Show current Shepherd version")
 		fmt.Println()
 		fmt.Println("When invoked as php.exe or composer.exe, acts as a transparent PHP version switcher.")
 		return
@@ -283,7 +283,7 @@ func main() {
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "flock: cannot get working directory: %v\n", err)
+		fmt.Fprintf(os.Stderr, "shp: cannot get working directory: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -297,19 +297,19 @@ func main() {
 		fromDotfile = true
 		targetPHP, err = resolveFromVersion(version)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "flock: %v\n", err)
+			fmt.Fprintf(os.Stderr, "shp: %v\n", err)
 			os.Exit(1)
 		}
 	} else {
 		// 2. Fallback: ask herd.phar which-php
 		bootstrap, berr := mostRecentPHP()
 		if berr != nil {
-			fmt.Fprintf(os.Stderr, "flock: %v\n", berr)
+			fmt.Fprintf(os.Stderr, "shp: %v\n", berr)
 			os.Exit(1)
 		}
 		targetPHP, err = whichPHP(bootstrap, cwd)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "flock: %v\n", err)
+			fmt.Fprintf(os.Stderr, "shp: %v\n", err)
 			os.Exit(1)
 		}
 		version = extractVersion(targetPHP)
@@ -354,7 +354,7 @@ func main() {
 
 // shimDir returns the directory where php.exe and composer.exe shims are installed.
 func shimDir() string {
-	return filepath.Join(os.Getenv("USERPROFILE"), ".config", "flock", "bin")
+	return filepath.Join(os.Getenv("USERPROFILE"), ".config", "shepherd", "bin")
 }
 
 // getUserPath reads the User PATH from the registry.
@@ -468,7 +468,7 @@ func cmdInstall() {
 		os.Exit(1)
 	}
 
-	for _, name := range []string{"php.exe", "composer.exe", "flock.exe"} {
+	for _, name := range []string{"php.exe", "composer.exe", "shp.exe"} {
 		dest := filepath.Join(dir, name)
 
 		// Skip if already identical
@@ -558,7 +558,7 @@ func cmdStatus() {
 	phpShim := filepath.Join(dir, "php.exe")
 	composerShim := filepath.Join(dir, "composer.exe")
 
-	fmt.Println("flock status:")
+	fmt.Println("shp status:")
 	fmt.Println()
 
 	// Show PHP versions (local and global)
@@ -699,9 +699,9 @@ func xdebugDLLPath(version string) string {
 //
 // Usage:
 //
-//	flock xdebug [mode]
-//	flock xdebug off
-//	flock xdebug status
+//	shp xdebug [mode]
+//	shp xdebug off
+//	shp xdebug status
 func cmdXdebug() {
 	// Determine desired mode
 	mode := "debug"
@@ -710,7 +710,7 @@ func cmdXdebug() {
 	}
 
 	if mode == "-h" || mode == "--help" {
-		fmt.Println("Usage: flock xdebug [mode]")
+		fmt.Println("Usage: shp xdebug [mode]")
 		fmt.Println()
 		fmt.Println("Toggle xdebug on/off for the resolved PHP version.")
 		fmt.Println()
@@ -919,8 +919,8 @@ var zendExtensions = map[string]bool{
 //
 // Usage:
 //
-//	flock ext install <name> [--php=8.4] [--ext-version=1.0.0] [--ts]
-//	flock ext list [--php=8.4]
+//	shp ext install <name> [--php=8.4] [--ext-version=1.0.0] [--ts]
+//	shp ext list [--php=8.4]
 func cmdExt() {
 	if len(os.Args) < 3 {
 		extUsage()
@@ -942,7 +942,7 @@ func cmdExt() {
 }
 
 func extUsage() {
-	fmt.Println("Usage: flock ext <command>")
+	fmt.Println("Usage: shp ext <command>")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  install <name>  Install a PHP extension from PECL")
@@ -959,7 +959,7 @@ func extUsage() {
 func cmdExtInstall() {
 	if len(os.Args) < 4 {
 		fmt.Fprintf(os.Stderr, "Error: extension name required\n")
-		fmt.Fprintf(os.Stderr, "Usage: flock ext install <name> [options]\n")
+		fmt.Fprintf(os.Stderr, "Usage: shp ext install <name> [options]\n")
 		os.Exit(1)
 	}
 
@@ -1151,7 +1151,7 @@ func downloadFile(rawURL string) (string, error) {
 		return "", fmt.Errorf("redirect led to non-HTTPS URL: %s", finalURL.String())
 	}
 
-	tmpFile, err := os.CreateTemp("", "flock-ext-*.zip")
+	tmpFile, err := os.CreateTemp("", "shepherd-ext-*.zip")
 	if err != nil {
 		return "", err
 	}
@@ -1360,7 +1360,7 @@ type githubAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
-const githubRepo = "shaffe-fr/php-flock"
+const githubRepo = "shaffe-fr/php-shepherd"
 
 // allowedDownloadHosts lists the GitHub domains from which self-update assets may be downloaded.
 var allowedDownloadHosts = map[string]bool{
@@ -1368,9 +1368,9 @@ var allowedDownloadHosts = map[string]bool{
 	"objects.githubusercontent.com": true,
 }
 
-// cmdDoctor diagnoses common issues that prevent flock from working correctly.
+// cmdDoctor diagnoses common issues that prevent Shepherd from working correctly.
 func cmdDoctor() {
-	fmt.Println("flock doctor")
+	fmt.Println("shp doctor")
 	fmt.Println()
 
 	issues := 0
@@ -1404,7 +1404,7 @@ func cmdDoctor() {
 
 	if _, err := os.Stat(phpShim); err != nil {
 		fmt.Printf("  ✗ php.exe shim not found at %s\n", phpShim)
-		fmt.Printf("    → Run: flock install\n")
+		fmt.Printf("    → Run: shp install\n")
 		issues++
 	} else {
 		fmt.Printf("  ✓ php.exe shim installed\n")
@@ -1412,7 +1412,7 @@ func cmdDoctor() {
 
 	if _, err := os.Stat(composerShim); err != nil {
 		fmt.Printf("  ✗ composer.exe shim not found at %s\n", composerShim)
-		fmt.Printf("    → Run: flock install\n")
+		fmt.Printf("    → Run: shp install\n")
 		issues++
 	} else {
 		fmt.Printf("  ✓ composer.exe shim installed\n")
@@ -1440,34 +1440,34 @@ func cmdDoctor() {
 		}
 
 		if shimIndex == -1 {
-			fmt.Printf("  ✗ Flock shim directory is NOT in User PATH\n")
-			fmt.Printf("    → Run: flock install\n")
+			fmt.Printf("  ✗ Shepherd shim directory is NOT in User PATH\n")
+			fmt.Printf("    → Run: shp install\n")
 			issues++
 		} else if herdIndex != -1 && shimIndex > herdIndex {
-			fmt.Printf("  ✗ Flock is AFTER Herd in PATH (position %d vs %d)\n", shimIndex+1, herdIndex+1)
-			fmt.Printf("    → Run: flock install\n")
+			fmt.Printf("  ✗ Shepherd is AFTER Herd in PATH (position %d vs %d)\n", shimIndex+1, herdIndex+1)
+			fmt.Printf("    → Run: shp install\n")
 			issues++
 		} else {
-			fmt.Printf("  ✓ PATH order: flock is before Herd\n")
+			fmt.Printf("  ✓ PATH order: Shepherd is before Herd\n")
 		}
 	}
 
-	// 4. Check for shell aliases that override flock
+	// 4. Check for shell aliases that override Shepherd
 	aliasIssues := doctorCheckAliases()
 	issues += aliasIssues
 
-	// 5. Check that where.exe php resolves to flock shim first
+	// 5. Check that where.exe php resolves to Shepherd shim first
 	whereOut, err := exec.Command("where.exe", "php").Output()
 	if err == nil {
 		whereLines := strings.Split(strings.TrimSpace(string(whereOut)), "\r\n")
 		if len(whereLines) > 0 {
 			first := strings.TrimSpace(whereLines[0])
 			if strings.EqualFold(first, phpShim) {
-				fmt.Printf("  ✓ where.exe php → flock shim (first result)\n")
+				fmt.Printf("  ✓ where.exe php → Shepherd shim (first result)\n")
 			} else {
 				fmt.Printf("  ✗ where.exe php resolves to: %s\n", first)
 				if strings.HasSuffix(strings.ToLower(first), ".bat") {
-					fmt.Printf("    → A .bat file takes priority over flock. Check your PATH or System PATH.\n")
+					fmt.Printf("    → A .bat file takes priority over Shepherd. Check your PATH or System PATH.\n")
 				} else {
 					fmt.Printf("    → Expected: %s\n", phpShim)
 				}
@@ -1479,9 +1479,9 @@ func cmdDoctor() {
 	// Summary
 	fmt.Println()
 	if issues == 0 {
-		fmt.Println("  No issues found. flock should be working correctly.")
+		fmt.Println("  No issues found. Shepherd should be working correctly.")
 	} else {
-		fmt.Printf("  Found %d issue(s). Fix them and run 'flock doctor' again.\n", issues)
+		fmt.Printf("  Found %d issue(s). Fix them and run 'shp doctor' again.\n", issues)
 	}
 }
 
@@ -1522,8 +1522,8 @@ aliasRe := regexp.MustCompile(`(?m)^\s*alias\s+(php|composer)\s*=`)
 psAliasRe := regexp.MustCompile(`(?mi)^\s*(Set-Alias|New-Alias|sal|nal)\s+(php|composer)\b`)
 // Nushell-style: alias php = ... (same syntax as bash but included for clarity)
 nuAliasRe := regexp.MustCompile(`(?m)^\s*(?:export\s+)?alias\s+(php|composer)\s*=`)
-// Pattern for conditional aliases (guarded by flock check) — these are fine
-guardRe := regexp.MustCompile(`(?mi)command\s+-v\s+flock|\$\+commands\[flock\]|Get-Command\s+flock|flock`)
+// Pattern for conditional aliases (guarded by Shepherd check) — these are fine
+guardRe := regexp.MustCompile(`(?mi)command\s+-v\s+shp|\$\+commands\[shp\]|Get-Command\s+shp|shp`)
 
 for _, configFile := range configFiles {
 data, err := os.ReadFile(configFile)
@@ -1533,7 +1533,7 @@ continue // File doesn't exist, skip
 
 content := string(data)
 
-// Check if there's a flock guard anywhere in the file
+// Check if there's a Shepherd guard anywhere in the file
 hasGuard := guardRe.MatchString(content)
 
 // Collect all alias matches from different patterns
@@ -1573,7 +1573,7 @@ continue
 }
 seen[f.cmd] = true
 fmt.Printf("  ✗ Shell alias found: %s is aliased in ~\\%s\n", f.cmd, relPath)
-fmt.Printf("    → This overrides flock. Remove the alias or guard it.\n")
+fmt.Printf("    → This overrides Shepherd. Remove the alias or guard it.\n")
 issues++
 }
 }
@@ -1587,7 +1587,7 @@ return issues
 
 // cmdSelfUpdate checks for a newer release on GitHub and updates the binary.
 func cmdSelfUpdate() {
-	fmt.Printf("flock %s\n", version)
+	fmt.Printf("shp %s\n", version)
 	fmt.Println("Checking for updates...")
 
 	// Fetch latest release from GitHub API
@@ -1598,7 +1598,7 @@ func cmdSelfUpdate() {
 		os.Exit(1)
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "flock/"+version)
+	req.Header.Set("User-Agent", "shepherd/"+version)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -1631,7 +1631,7 @@ func cmdSelfUpdate() {
 
 	// Find the right asset for this OS/arch
 	arch := runtime.GOARCH
-	assetName := fmt.Sprintf("php-flock_%s_windows_%s.zip", latestVersion, arch)
+	assetName := fmt.Sprintf("php-shepherd_%s_windows_%s.zip", latestVersion, arch)
 
 	var downloadURL string
 	var checksumURL string
@@ -1692,8 +1692,8 @@ func cmdSelfUpdate() {
 		fmt.Println("Cosign signature present ✓ (verify with: cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.sig checksums.txt)")
 	}
 
-	// Extract flock.exe from the zip
-	newBinary, err := extractBinaryFromZip(zipPath, "flock.exe")
+	// Extract shp.exe from the zip
+	newBinary, err := extractBinaryFromZip(zipPath, "shp.exe")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error extracting update: %v\n", err)
 		os.Exit(1)
@@ -1716,13 +1716,13 @@ func cmdSelfUpdate() {
 
 	// Also update shims if they exist
 	dir := shimDir()
-	for _, name := range []string{"php.exe", "composer.exe", "flock.exe"} {
+	for _, name := range []string{"php.exe", "composer.exe", "shp.exe"} {
 		shimPath := filepath.Join(dir, name)
 		if strings.EqualFold(shimPath, self) {
 			continue // Already updated
 		}
 		if _, err := os.Stat(shimPath); err == nil {
-			newCopy, err := extractBinaryFromZip(zipPath, "flock.exe")
+			newCopy, err := extractBinaryFromZip(zipPath, "shp.exe")
 			if err == nil {
 				if err := replaceBinary(shimPath, newCopy); err == nil {
 					fmt.Printf("  ✓ Updated %s\n", shimPath)
@@ -1732,7 +1732,7 @@ func cmdSelfUpdate() {
 		}
 	}
 
-	fmt.Printf("\n✅ flock updated to %s\n", latestVersion)
+	fmt.Printf("\n✅ Shepherd updated to %s\n", latestVersion)
 }
 
 // validateDownloadURL ensures the URL points to an allowed GitHub host.
@@ -1825,7 +1825,7 @@ func extractBinaryFromZip(zipPath, fileName string) (string, error) {
 			}
 			defer rc.Close()
 
-			tmpFile, err := os.CreateTemp("", "flock-update-*.exe")
+			tmpFile, err := os.CreateTemp("", "shepherd-update-*.exe")
 			if err != nil {
 				return "", err
 			}

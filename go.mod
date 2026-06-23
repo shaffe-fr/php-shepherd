@@ -1,4 +1,4 @@
-module github.com/shaffe-fr/php-flock
+module github.com/shaffe-fr/php-shepherd
 
 go 1.25.0
 

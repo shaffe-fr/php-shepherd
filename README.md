@@ -1,10 +1,10 @@
-# flock
+# Shepherd
 
 Per-project PHP on Windows, done right.
 
-Drop a `.phpversion` file in your project root, and flock ensures both the CLI and Herd's nginx use the correct PHP version — automatically.
+Drop a `.phpversion` file in your project root, and Shepherd ensures both the CLI and Herd's nginx use the correct PHP version — automatically.
 
-[![CI](https://github.com/shaffe-fr/php-flock/actions/workflows/ci.yml/badge.svg)](https://github.com/shaffe-fr/php-flock/actions/workflows/ci.yml)
+[![CI](https://github.com/shaffe-fr/php-shepherd/actions/workflows/ci.yml/badge.svg)](https://github.com/shaffe-fr/php-shepherd/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## The problem
@@ -13,7 +13,7 @@ Herd installs multiple PHP versions side by side but doesn't natively support pe
 
 ## How it works
 
-`flock` is a single compiled binary (~2 MB) that replaces both `php` and `composer` in your PATH:
+`shp` is a single compiled binary (~2 MB) that replaces both `php` and `composer` in your PATH:
 
 1. **Reads `.phpversion`** from the current directory, walking up the tree (like `.nvmrc` for Node)
 2. **Resolves the matching `php.exe`** from Herd's installations (`~/.config/herd/bin/phpXX/`)
@@ -33,27 +33,27 @@ No batch scripts. No subshells. No recursion. No race conditions.
 
 ### 1. Download
 
-Grab the latest `php-flock_<version>_windows_<arch>.zip` from the [releases page](https://github.com/shaffe-fr/php-flock/releases) and extract `flock.exe` somewhere convenient.
+Grab the latest `php-shepherd_<version>_windows_<arch>.zip` from the [releases page](https://github.com/shaffe-fr/php-shepherd/releases) and extract `shp.exe` somewhere convenient.
 
 ### 2. Run the installer (recommended)
 
 The binary ships with a built-in installer. From the folder where you extracted it:
 
 ```powershell
-.\flock.exe install
+.\shp.exe install
 ```
 
 This will:
 
-- Copy the binary as `php.exe`, `composer.exe`, and `flock.exe` into
-  `%USERPROFILE%\.config\flock\bin`
+- Copy the binary as `php.exe`, `composer.exe`, and `shp.exe` into
+  `%USERPROFILE%\.config\shepherd\bin`
 - Prepend that directory to your **User** `PATH` (so it takes precedence over Herd's own `php`)
 - Broadcast the environment change to running apps
 
 Use `--force` (or `-f`) to kill running shim processes before overwriting — useful when a previous `php.exe` or `composer.exe` shim is still in use by another process:
 
 ```powershell
-.\flock.exe install --force
+.\shp.exe install --force
 ```
 
 Then **restart your terminal** for the `PATH` change to take effect.
@@ -61,13 +61,13 @@ Then **restart your terminal** for the `PATH` change to take effect.
 Verify it worked:
 
 ```powershell
-flock status
+shp status
 ```
 
 To remove everything (shims + PATH entry):
 
 ```powershell
-flock uninstall
+shp uninstall
 ```
 
 ### Manual installation (alternative)
@@ -78,15 +78,15 @@ directory that comes **before** Herd's `~/.config/herd/bin` in your `PATH`:
 ```powershell
 $dest = "$env:USERPROFILE\.bin"
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
-Copy-Item flock.exe "$dest\php.exe"
-Copy-Item flock.exe "$dest\composer.exe"
+Copy-Item shp.exe "$dest\php.exe"
+Copy-Item shp.exe "$dest\composer.exe"
 ```
 
 ### From source
 
 ```powershell
-go build -ldflags="-s -w -X main.version=dev" -o flock.exe .
-.\flock.exe install
+go build -ldflags="-s -w -X main.version=dev" -o shp.exe .
+.\shp.exe install
 ```
 
 ## Usage
@@ -109,33 +109,33 @@ cd ../other-project  # has .phpversion containing "8.5"
 php -v             # → PHP 8.5.x
 ```
 
-If no `.phpversion` is found while walking up the tree, flock falls back to asking Herd directly via `herd.phar which-php`.
+If no `.phpversion` is found while walking up the tree, Shepherd falls back to asking Herd directly via `herd.phar which-php`.
 
-When the version in `.phpversion` differs from what's configured in Herd's nginx, flock updates the config and restarts nginx in the background — so your local `.test` domain always matches.
+When the version in `.phpversion` differs from what's configured in Herd's nginx, Shepherd updates the config and restarts nginx in the background — so your local `.test` domain always matches.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `flock install` | Install the `php`/`composer` shims and prepend them to the User PATH |
-| `flock uninstall` | Remove the shims and clean up the PATH |
-| `flock status` | Show whether the shims are installed and ordered correctly relative to Herd |
-| `flock doctor` | Diagnose common issues with flock setup |
-| `flock xdebug [mode]` | Toggle xdebug on/off for the resolved PHP version |
-| `flock ext install <name>` | Install a PHP extension from PECL |
-| `flock ext list` | List installed extensions for the resolved PHP |
-| `flock self-update` | Update flock to the latest GitHub release (with SHA256 verification) |
-| `flock version` | Show the current flock version |
-| `flock` (no args) | Print usage help |
+| `shp install` | Install the `php`/`composer` shims and prepend them to the User PATH |
+| `shp uninstall` | Remove the shims and clean up the PATH |
+| `shp status` | Show whether the shims are installed and ordered correctly relative to Herd |
+| `shp doctor` | Diagnose common issues with Shepherd setup |
+| `shp xdebug [mode]` | Toggle xdebug on/off for the resolved PHP version |
+| `shp ext install <name>` | Install a PHP extension from PECL |
+| `shp ext list` | List installed extensions for the resolved PHP |
+| `shp self-update` | Update Shepherd to the latest GitHub release (with SHA256 verification) |
+| `shp version` | Show the current shp version |
+| `shp` (no args) | Print usage help |
 
 When invoked as `php`/`php.exe` or `composer`/`composer.exe`, it acts as a transparent PHP version switcher (see [Multicall binary](#multicall-binary)).
 
 ## Self-update
 
-Update flock to the latest version with a single command:
+Update Shepherd to the latest version with a single command:
 
 ```powershell
-flock self-update
+shp self-update
 ```
 
 This will:
@@ -148,8 +148,8 @@ This will:
 Downloads are restricted to HTTPS on known GitHub domains only. Releases are signed with [cosign](https://docs.sigstore.dev) (Sigstore keyless) — see [SECURITY.md](SECURITY.md) for manual verification instructions.
 
 ```powershell
-flock version       # show current version
-flock self-update   # update to latest
+shp version       # show current version
+shp self-update   # update to latest
 ```
 
 ## Xdebug management
@@ -157,12 +157,12 @@ flock self-update   # update to latest
 Toggle xdebug on or off without manually editing `php.ini`:
 
 ```powershell
-flock xdebug              # enable with mode=debug (default)
-flock xdebug coverage     # enable with mode=coverage
-flock xdebug debug,coverage  # both
-flock xdebug profile      # profiling mode
-flock xdebug off          # disable xdebug
-flock xdebug status       # show current state
+shp xdebug              # enable with mode=debug (default)
+shp xdebug coverage     # enable with mode=coverage
+shp xdebug debug,coverage  # both
+shp xdebug profile      # profiling mode
+shp xdebug off          # disable xdebug
+shp xdebug status       # show current state
 ```
 
 The command resolves the PHP version the same way as the `php` shim (`.phpversion` → Herd fallback), then edits the matching `php.ini` in place:
@@ -176,17 +176,17 @@ The command resolves the PHP version the same way as the `php` shim (`.phpversio
 
 ```powershell
 # Run tests with coverage
-flock xdebug coverage
+shp xdebug coverage
 php artisan test --coverage
-flock xdebug off
+shp xdebug off
 
 # Debug a request (e.g. with PhpStorm)
-flock xdebug debug
+shp xdebug debug
 # ... trigger your request ...
-flock xdebug off
+shp xdebug off
 
 # Check current state
-flock xdebug status
+shp xdebug status
 #  ✅ xdebug is enabled (mode: coverage)
 ```
 
@@ -197,10 +197,10 @@ Xdebug adds overhead, so toggling it off when you don't need it keeps things fas
 Install PHP extensions from PECL directly into the resolved Herd PHP version:
 
 ```powershell
-flock ext install imagick
-flock ext install redis --php=8.4
-flock ext install mongodb --ext-version=1.19.0
-flock ext list
+shp ext install imagick
+shp ext install redis --php=8.4
+shp ext install mongodb --ext-version=1.19.0
+shp ext list
 ```
 
 ### Options
@@ -230,7 +230,7 @@ The binary detects how it was invoked via its filename:
 |-----------|----------|
 | `php` or `php.exe` | Runs PHP with your arguments |
 | `composer` or `composer.exe` | Runs `composer.phar` via the resolved PHP |
-| `flock.exe` | Management commands (`install`/`uninstall`/`status`/`xdebug`/`ext`/`self-update`) |
+| `shp.exe` | Management commands (`install`/`uninstall`/`status`/`xdebug`/`ext`/`self-update`) |
 
 This means you only need one binary — the `install` command sets up all three names for you.
 
@@ -244,7 +244,7 @@ Herd stores the isolated PHP version for each site in its nginx config:
 fastcgi_pass $herd_sock_84;
 ```
 
-When you switch versions via `.phpversion`, flock:
+When you switch versions via `.phpversion`, Shepherd:
 
 1. Checks if the config already matches — if so, does nothing (fast path)
 2. Updates the `ISOLATED_PHP_VERSION` comment and `$herd_sock_XX` references
@@ -259,13 +259,13 @@ otherwise Herd's own `php.exe` wins. The `install` command handles this for you,
 `status` will warn you if the ordering is wrong:
 
 ```
-%USERPROFILE%\.config\flock\bin       ← flock (must be first)
+%USERPROFILE%\.config\shepherd\bin       ← shepherd (must be first)
 %USERPROFILE%\.config\herd\bin        ← Herd's default PHP
 ```
 
 ## Troubleshooting
 
-- **`php -v` still shows the wrong version** — run `flock status`. If the shim
+- **`php -v` still shows the wrong version** — run `shp status`. If the shim
   is listed *after* Herd in PATH, re-run `install` and restart your terminal.
 - **Changes don't apply** — the `PATH` is only re-read when a new terminal/session starts.
   Open a fresh terminal.
@@ -274,7 +274,7 @@ otherwise Herd's own `php.exe` wins. The `install` command handles this for you,
 
 ## Comparison with batch scripts
 
-| | Batch scripts | flock |
+| | Batch scripts | Shepherd |
 |---|---|---|
 | Spawn subshells | Yes (cmd.exe chains) | No |
 | PATH recursion risk | High | Impossible |
