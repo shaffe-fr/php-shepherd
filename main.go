@@ -1,0 +1,1161 @@
+package main
+
+import (
+	"archive/zip"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"syscall"
+	"unsafe"
+
+	"golang.org/x/sys/windows/registry"
+)
+
+// phpDirRe matches a Herd PHP install dir name like "php84" or "php810".
+var phpDirRe = regexp.MustCompile(`^php(\d)(\d+)$`)
+
+// phpDirVersion returns a comparable integer for a Herd PHP dir
+// (e.g. "php84" -> 8004, "php810" -> 8010). Returns -1 if it doesn't match.
+func phpDirVersion(dir string) int {
+	m := phpDirRe.FindStringSubmatch(filepath.Base(dir))
+	if len(m) != 3 {
+		return -1
+	}
+	major, _ := strconv.Atoi(m[1])
+	minor, _ := strconv.Atoi(m[2])
+	return major*1000 + minor
+}
+
+// versionRe validates that a .phpversion file contains a proper version string.
+var versionRe = regexp.MustCompile(`^\d+\.\d+$`)
+
+// herdHome returns the Herd bin directory.
+func herdHome() string {
+	return filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "bin")
+}
+
+// findPHPVersion walks up from dir looking for a .phpversion file.
+// Returns the version string (e.g. "8.5") or empty if not found.
+func findPHPVersion(dir string) string {
+	for {
+		candidate := filepath.Join(dir, ".phpversion")
+		data, err := os.ReadFile(candidate)
+		if err == nil {
+			ver := strings.TrimSpace(string(data))
+			if versionRe.MatchString(ver) {
+				return ver
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
+// resolveFromVersion returns the php.exe path for a given version like "8.5".
+func resolveFromVersion(ver string) (string, error) {
+	if !versionRe.MatchString(ver) {
+		return "", fmt.Errorf("invalid PHP version format: %q", ver)
+	}
+	nodot := strings.ReplaceAll(ver, ".", "")
+	php := filepath.Join(herdHome(), "php"+nodot, "php.exe")
+	if _, err := os.Stat(php); err != nil {
+		return "", fmt.Errorf("php %s not found at %s", ver, php)
+	}
+	return php, nil
+}
+
+// mostRecentPHP finds the highest-versioned php.exe under Herd.
+func mostRecentPHP() (string, error) {
+	pattern := filepath.Join(herdHome(), "php*")
+	matches, err := filepath.Glob(pattern)
+	if err != nil || len(matches) == 0 {
+		return "", fmt.Errorf("no PHP installations found in %s", herdHome())
+	}
+	// Sort by numeric PHP version (descending) so php810 (8.10) ranks above php84 (8.4).
+	sort.Slice(matches, func(i, j int) bool {
+		return phpDirVersion(matches[i]) > phpDirVersion(matches[j])
+	})
+	for _, m := range matches {
+		php := filepath.Join(m, "php.exe")
+		if _, err := os.Stat(php); err == nil {
+			return php, nil
+		}
+	}
+	return "", fmt.Errorf("no php.exe found in %s", herdHome())
+}
+
+// whichPHP resolves the PHP executable via herd.phar which-php.
+func whichPHP(bootstrapPHP, dir string) (string, error) {
+	herdPhar := filepath.Join(herdHome(), "herd.phar")
+	cmd := exec.Command(bootstrapPHP, herdPhar, "which-php", dir)
+	cmd.Stderr = nil
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("which-php failed: %w", err)
+	}
+	php := strings.TrimSpace(string(out))
+	if php == "" {
+		return "", fmt.Errorf("which-php returned empty")
+	}
+	// Validate that the returned path is under herdHome
+	absPhp, err := filepath.Abs(php)
+	if err != nil {
+		return "", fmt.Errorf("invalid path from which-php: %w", err)
+	}
+	absHerd, _ := filepath.Abs(herdHome())
+	absPhpLower := strings.ToLower(absPhp)
+	absHerdLower := strings.ToLower(absHerd)
+	sep := string(os.PathSeparator)
+	// Ensure the returned path is the Herd dir itself or strictly inside it.
+	// A plain HasPrefix check would wrongly accept siblings like "...\bin-evil".
+	if absPhpLower != absHerdLower && !strings.HasPrefix(absPhpLower, absHerdLower+sep) {
+		return "", fmt.Errorf("which-php returned path outside Herd directory: %s", php)
+	}
+	return absPhp, nil
+}
+
+// extractVersion extracts the PHP version from a path like .../php84/php.exe -> "8.4"
+func extractVersion(phpPath string) string {
+	dir := filepath.Base(filepath.Dir(phpPath))
+	m := phpDirRe.FindStringSubmatch(dir)
+	if len(m) == 3 {
+		return m[1] + "." + m[2]
+	}
+	return ""
+}
+
+// syncNginx updates the Herd nginx config if needed, then restarts nginx.
+// It modifies the conf file inline and triggers a non-blocking restart.
+func syncNginx(projectDir, version string) {
+	folderName := filepath.Base(projectDir)
+	site := folderName + ".test"
+	confPath := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "valet", "Nginx", site+".conf")
+
+	// Bail if no conf file
+	data, err := os.ReadFile(confPath)
+	if err != nil {
+		return
+	}
+	content := string(data)
+
+	// Check if already up-to-date
+	if strings.Contains(content, "ISOLATED_PHP_VERSION="+version) {
+		return
+	}
+
+	// Bail if conf is empty (don't overwrite with regex on empty content)
+	if len(strings.TrimSpace(content)) == 0 {
+		return
+	}
+
+	// Update ISOLATED_PHP_VERSION comment
+	reIsolated := regexp.MustCompile(`(?m)^# ISOLATED_PHP_VERSION=.*$`)
+	content = reIsolated.ReplaceAllString(content, "# ISOLATED_PHP_VERSION="+version)
+
+	// Update herd_sock_XX references
+	nodot := strings.ReplaceAll(version, ".", "")
+	reSock := regexp.MustCompile(`\$herd_sock_\d+`)
+	content = reSock.ReplaceAllString(content, "$herd_sock_"+nodot)
+
+	// Write back
+	if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
+		return
+	}
+
+	// Restart nginx via herd.phar (non-blocking, using a direct php.exe)
+	bootstrap, err := mostRecentPHP()
+	if err != nil {
+		return
+	}
+	herdPhar := filepath.Join(herdHome(), "herd.phar")
+	cmd := exec.Command(bootstrap, herdPhar, "restart", "nginx")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000} // CREATE_NO_WINDOW
+	_ = cmd.Start()
+}
+
+// rewriteXdebugArgs rewrites xdebug DLL paths and strips -n flag.
+func rewriteXdebugArgs(args []string, version string) []string {
+	// Without a known version we can't build a valid DLL name; only strip -n.
+	if version == "" {
+		var result []string
+		for _, arg := range args {
+			if arg == "-n" {
+				continue
+			}
+			result = append(result, arg)
+		}
+		return result
+	}
+	xdebugDir := filepath.Join(os.Getenv("PROGRAMFILES"), "Herd", "resources", "app.asar.unpacked", "resources", "bin", "xdebug")
+	dlls, _ := filepath.Glob(filepath.Join(xdebugDir, "xdebug-*.dll"))
+
+	var result []string
+	for _, arg := range args {
+		if arg == "-n" {
+			continue
+		}
+		for _, dll := range dlls {
+			dllName := filepath.Base(dll)
+			arg = strings.ReplaceAll(arg, dllName, "xdebug-"+version+".dll")
+		}
+		result = append(result, arg)
+	}
+	return result
+}
+
+func main() {
+	// Detect if called as "composer" (multicall binary)
+	exe := strings.ToLower(filepath.Base(os.Args[0]))
+	isComposer := strings.HasPrefix(exe, "composer")
+	isFlock := strings.HasPrefix(exe, "flock")
+
+	// Handle subcommands (only when invoked as flock)
+	if isFlock {
+		if len(os.Args) > 1 {
+			switch os.Args[1] {
+			case "install":
+				cmdInstall()
+				return
+			case "uninstall":
+				cmdUninstall()
+				return
+			case "status":
+				cmdStatus()
+				return
+			case "xdebug":
+				cmdXdebug()
+				return
+			case "ext":
+				cmdExt()
+				return
+			}
+		}
+		fmt.Println("flock - Per-project PHP on Windows, done right.")
+		fmt.Println()
+		fmt.Println("Commands:")
+		fmt.Println("  install     Install php.exe and composer.exe shims and configure PATH")
+		fmt.Println("  uninstall   Remove shims and restore PATH")
+		fmt.Println("  status      Show current PATH configuration status")
+		fmt.Println("  xdebug      Toggle xdebug on/off for the current PHP version")
+		fmt.Println("  ext         Install PHP extensions from PECL")
+		fmt.Println()
+		fmt.Println("When invoked as php.exe or composer.exe, acts as a transparent PHP version switcher.")
+		return
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flock: cannot get working directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	var targetPHP string
+	var version string
+	fromDotfile := false
+
+	// 1. Try .phpversion file (walk up directory tree)
+	version = findPHPVersion(cwd)
+	if version != "" {
+		fromDotfile = true
+		targetPHP, err = resolveFromVersion(version)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flock: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		// 2. Fallback: ask herd.phar which-php
+		bootstrap, berr := mostRecentPHP()
+		if berr != nil {
+			fmt.Fprintf(os.Stderr, "flock: %v\n", berr)
+			os.Exit(1)
+		}
+		targetPHP, err = whichPHP(bootstrap, cwd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flock: %v\n", err)
+			os.Exit(1)
+		}
+		version = extractVersion(targetPHP)
+	}
+
+	// Resolve extension_dir
+	extDir := filepath.Join(filepath.Dir(targetPHP), "ext")
+
+	// Build args
+	var cmdArgs []string
+
+	if isComposer {
+		// composer mode: php.exe composer.phar <user args>
+		composerPhar := filepath.Join(herdHome(), "composer.phar")
+		cmdArgs = []string{composerPhar}
+		cmdArgs = append(cmdArgs, os.Args[1:]...)
+	} else {
+		// php mode: php.exe -d extension_dir=... <rewritten user args>
+		userArgs := rewriteXdebugArgs(os.Args[1:], version)
+		cmdArgs = []string{"-d", "extension_dir=" + extDir}
+		cmdArgs = append(cmdArgs, userArgs...)
+	}
+
+	// Sync nginx config in background (if .phpversion exists)
+	if fromDotfile {
+		syncNginx(cwd, version)
+	}
+
+	// Exec PHP
+	cmd := exec.Command(targetPHP, cmdArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		os.Exit(1)
+	}
+}
+
+// shimDir returns the directory where php.exe and composer.exe shims are installed.
+func shimDir() string {
+	return filepath.Join(os.Getenv("USERPROFILE"), ".config", "flock", "bin")
+}
+
+// getUserPath reads the User PATH from the registry.
+func getUserPath() (string, registry.Key, uint32, error) {
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE|registry.SET_VALUE)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	val, valType, err := key.GetStringValue("Path")
+	if err != nil {
+		key.Close()
+		return "", 0, 0, err
+	}
+	return val, key, valType, nil
+}
+
+// setUserPath writes the User PATH to the registry preserving the original type (REG_EXPAND_SZ or REG_SZ).
+func setUserPath(path string, valType uint32) error {
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+
+	// Preserve the registry value type (REG_EXPAND_SZ if it was already, for %USERPROFILE% etc.)
+	if valType == registry.EXPAND_SZ {
+		return key.SetExpandStringValue("Path", path)
+	}
+	return key.SetStringValue("Path", path)
+}
+
+// broadcastSettingChange sends WM_SETTINGCHANGE to all top-level windows.
+func broadcastSettingChange() {
+	user32 := syscall.NewLazyDLL("user32.dll")
+	sendMessageTimeout := user32.NewProc("SendMessageTimeoutW")
+	env, _ := syscall.UTF16PtrFromString("Environment")
+	// HWND_BROADCAST=0xFFFF, WM_SETTINGCHANGE=0x001A, SMTO_ABORTIFHUNG=0x0002
+	sendMessageTimeout.Call(0xFFFF, 0x001A, 0, uintptr(unsafe.Pointer(env)), 0x0002, 5000, 0)
+}
+
+// cmdInstall installs the shims and configures PATH.
+func cmdInstall() {
+	dir := shimDir()
+
+	// Create shim directory
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating directory %s: %v\n", dir, err)
+		os.Exit(1)
+	}
+
+	// Copy current binary as php.exe and composer.exe
+	self, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error finding own executable: %v\n", err)
+		os.Exit(1)
+	}
+	self, _ = filepath.EvalSymlinks(self)
+	selfData, err := os.ReadFile(self)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading own executable: %v\n", err)
+		os.Exit(1)
+	}
+
+	for _, name := range []string{"php.exe", "composer.exe", "flock.exe"} {
+		dest := filepath.Join(dir, name)
+		if err := os.WriteFile(dest, selfData, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", dest, err)
+			os.Exit(1)
+		}
+		fmt.Printf("  ✓ Installed %s\n", dest)
+	}
+
+	// Configure User PATH
+	userPath, _, valType, err := getUserPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading User PATH: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Remove any existing entry for our shim dir, then prepend
+	entries := strings.Split(userPath, ";")
+	var filtered []string
+	for _, e := range entries {
+		if !strings.EqualFold(strings.TrimRight(e, `\`), strings.TrimRight(dir, `\`)) && e != "" {
+			filtered = append(filtered, e)
+		}
+	}
+	newPath := dir + ";" + strings.Join(filtered, ";")
+
+	if err := setUserPath(newPath, valType); err != nil {
+		fmt.Fprintf(os.Stderr, "Error setting User PATH: %v\n", err)
+		os.Exit(1)
+	}
+	broadcastSettingChange()
+
+	fmt.Println()
+	fmt.Printf("  ✓ Added %s to the beginning of User PATH\n", dir)
+	fmt.Println()
+	fmt.Println("Done! Restart your terminal for the PATH change to take effect.")
+}
+
+// cmdUninstall removes the shims and restores PATH.
+func cmdUninstall() {
+	dir := shimDir()
+
+	// Remove shim directory
+	if err := os.RemoveAll(dir); err != nil {
+		fmt.Fprintf(os.Stderr, "Error removing %s: %v\n", dir, err)
+	} else {
+		fmt.Printf("  ✓ Removed %s\n", dir)
+	}
+
+	// Remove from User PATH
+	userPath, _, valType, err := getUserPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading User PATH: %v\n", err)
+		os.Exit(1)
+	}
+
+	entries := strings.Split(userPath, ";")
+	var filtered []string
+	for _, e := range entries {
+		if !strings.EqualFold(strings.TrimRight(e, `\`), strings.TrimRight(dir, `\`)) && e != "" {
+			filtered = append(filtered, e)
+		}
+	}
+	newPath := strings.Join(filtered, ";")
+
+	if err := setUserPath(newPath, valType); err != nil {
+		fmt.Fprintf(os.Stderr, "Error setting User PATH: %v\n", err)
+		os.Exit(1)
+	}
+	broadcastSettingChange()
+
+	fmt.Printf("  ✓ Removed %s from User PATH\n", dir)
+	fmt.Println()
+	fmt.Println("Done! Restart your terminal for the PATH change to take effect.")
+}
+
+// cmdStatus shows the current configuration status.
+func cmdStatus() {
+	dir := shimDir()
+	phpShim := filepath.Join(dir, "php.exe")
+	composerShim := filepath.Join(dir, "composer.exe")
+
+	fmt.Println("flock status:")
+	fmt.Println()
+
+	// Check if shims exist
+	if _, err := os.Stat(phpShim); err == nil {
+		fmt.Printf("  ✓ php.exe shim installed at %s\n", phpShim)
+	} else {
+		fmt.Printf("  ✗ php.exe shim not found at %s\n", phpShim)
+	}
+	if _, err := os.Stat(composerShim); err == nil {
+		fmt.Printf("  ✓ composer.exe shim installed at %s\n", composerShim)
+	} else {
+		fmt.Printf("  ✗ composer.exe shim not found at %s\n", composerShim)
+	}
+
+	// Check PATH
+	userPath, _, _, err := getUserPath()
+	if err != nil {
+		fmt.Printf("  ✗ Cannot read User PATH: %v\n", err)
+		return
+	}
+
+	entries := strings.Split(userPath, ";")
+	shimIndex := -1
+	herdIndex := -1
+	herdBin := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "bin")
+
+	for i, e := range entries {
+		clean := strings.TrimRight(e, `\`)
+		if strings.EqualFold(clean, strings.TrimRight(dir, `\`)) {
+			shimIndex = i
+		}
+		if strings.EqualFold(clean, herdBin) {
+			herdIndex = i
+		}
+	}
+
+	fmt.Println()
+	if shimIndex == -1 {
+		fmt.Printf("  ✗ %s is NOT in User PATH\n", dir)
+	} else if herdIndex == -1 {
+		fmt.Printf("  ✓ %s is in User PATH (position %d)\n", dir, shimIndex+1)
+		fmt.Printf("  ? Herd bin not found in User PATH\n")
+	} else if shimIndex < herdIndex {
+		fmt.Printf("  ✓ %s is before Herd in PATH (position %d vs %d)\n", dir, shimIndex+1, herdIndex+1)
+	} else {
+		fmt.Printf("  ✗ %s is AFTER Herd in PATH (position %d vs %d) — run 'install' to fix\n", dir, shimIndex+1, herdIndex+1)
+	}
+}
+
+// validXdebugModes lists accepted xdebug mode values.
+var validXdebugModes = map[string]bool{
+	"off":            true,
+	"debug":          true,
+	"coverage":       true,
+	"debug,coverage": true,
+	"coverage,debug": true,
+	"profile":        true,
+	"trace":          true,
+}
+
+// phpIniPath returns the path to the php.ini for the given php.exe directory.
+func phpIniPath(phpDir string) string {
+	return filepath.Join(phpDir, "php.ini")
+}
+
+// xdebugDLLPath returns the expected xdebug DLL path for a given PHP version.
+func xdebugDLLPath(version string) string {
+	return filepath.Join(
+		os.Getenv("PROGRAMFILES"),
+		"Herd", "resources", "app.asar.unpacked", "resources", "bin", "xdebug",
+		"xdebug-"+version+".dll",
+	)
+}
+
+// cmdXdebug toggles xdebug on/off in the php.ini for the resolved PHP version.
+//
+// Usage:
+//
+//	flock xdebug [mode]
+//	flock xdebug off
+//	flock xdebug status
+func cmdXdebug() {
+	// Determine desired mode
+	mode := "debug"
+	if len(os.Args) > 2 {
+		mode = strings.ToLower(os.Args[2])
+	}
+
+	if mode == "-h" || mode == "--help" {
+		fmt.Println("Usage: flock xdebug [mode]")
+		fmt.Println()
+		fmt.Println("Toggle xdebug on/off for the resolved PHP version.")
+		fmt.Println()
+		fmt.Println("Modes:")
+		fmt.Println("  debug           Debugging (default)")
+		fmt.Println("  coverage        Code coverage")
+		fmt.Println("  debug,coverage  Both")
+		fmt.Println("  profile         Profiling")
+		fmt.Println("  trace           Function trace")
+		fmt.Println("  off             Force disable xdebug")
+		fmt.Println("  status          Show current xdebug state")
+		return
+	}
+
+	// Resolve PHP version from cwd
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	version := findPHPVersion(cwd)
+	var phpDir string
+	if version != "" {
+		phpExe, err := resolveFromVersion(version)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		phpDir = filepath.Dir(phpExe)
+	} else {
+		bootstrap, err := mostRecentPHP()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		resolved, err := whichPHP(bootstrap, cwd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		version = extractVersion(resolved)
+		phpDir = filepath.Dir(resolved)
+	}
+
+	if version == "" {
+		fmt.Fprintf(os.Stderr, "Error: could not determine PHP version\n")
+		os.Exit(1)
+	}
+
+	iniPath := phpIniPath(phpDir)
+	fmt.Printf("PHP %s — %s\n", version, iniPath)
+
+	// Read php.ini
+	data, err := os.ReadFile(iniPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading php.ini: %v\n", err)
+		os.Exit(1)
+	}
+	content := string(data)
+	lines := strings.Split(content, "\n")
+
+	// Handle "status" subcommand
+	if mode == "status" {
+		xdebugStatus(lines, version)
+		return
+	}
+
+	// Validate mode
+	if !validXdebugModes[mode] {
+		fmt.Fprintf(os.Stderr, "Error: invalid mode %q\n", mode)
+		fmt.Fprintf(os.Stderr, "Valid modes: debug, coverage, debug,coverage, profile, trace, off\n")
+		os.Exit(1)
+	}
+
+	// Find zend_extension line containing "xdebug"
+	zendIdx := -1
+	zendEnabled := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(strings.ToLower(trimmed), "xdebug") &&
+			(strings.HasPrefix(trimmed, "zend_extension") || strings.HasPrefix(trimmed, ";zend_extension")) {
+			zendIdx = i
+			zendEnabled = !strings.HasPrefix(trimmed, ";")
+			break
+		}
+	}
+
+	// If "off" is requested, just disable
+	if mode == "off" {
+		if zendIdx == -1 {
+			fmt.Println("  xdebug is not configured — nothing to disable")
+			return
+		}
+		if !zendEnabled {
+			fmt.Println("  xdebug is already disabled")
+			return
+		}
+		lines[zendIdx] = ";" + lines[zendIdx]
+		writeIni(iniPath, lines)
+		fmt.Println("  ⏸️  xdebug disabled")
+		return
+	}
+
+	// Toggle ON or ensure correct mode
+	if zendIdx == -1 {
+		// No xdebug line exists — add it
+		dllPath := xdebugDLLPath(version)
+		if _, err := os.Stat(dllPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: xdebug DLL not found at %s\n", dllPath)
+			os.Exit(1)
+		}
+		lines = append(lines, "")
+		lines = append(lines, "zend_extension="+dllPath)
+		lines = append(lines, "xdebug.mode="+mode)
+		lines = append(lines, "xdebug.discover_client_host=true")
+		lines = append(lines, "xdebug.start_with_request=yes")
+		writeIni(iniPath, lines)
+		fmt.Printf("  ✅ xdebug enabled (mode: %s)\n", mode)
+		return
+	}
+
+	if !zendEnabled {
+		// Uncomment
+		lines[zendIdx] = strings.TrimPrefix(lines[zendIdx], ";")
+	}
+
+	// Ensure xdebug.mode is set correctly
+	lines = ensureIniValue(lines, zendIdx, "xdebug.mode", mode)
+	lines = ensureIniValue(lines, zendIdx, "xdebug.discover_client_host", "true")
+	lines = ensureIniValue(lines, zendIdx, "xdebug.start_with_request", "yes")
+
+	writeIni(iniPath, lines)
+	if !zendEnabled {
+		fmt.Printf("  ✅ xdebug enabled (mode: %s)\n", mode)
+	} else {
+		fmt.Printf("  ✅ xdebug mode updated to: %s\n", mode)
+	}
+}
+
+// xdebugStatus prints the current xdebug state from php.ini lines.
+func xdebugStatus(lines []string, version string) {
+	enabled := false
+	mode := ""
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(strings.ToLower(trimmed), "xdebug") &&
+			strings.HasPrefix(trimmed, "zend_extension") {
+			enabled = true
+		}
+		if strings.HasPrefix(trimmed, "xdebug.mode") {
+			parts := strings.SplitN(trimmed, "=", 2)
+			if len(parts) == 2 {
+				mode = strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	if enabled {
+		if mode == "" {
+			mode = "debug (default)"
+		}
+		fmt.Printf("  ✅ xdebug is enabled (mode: %s)\n", mode)
+	} else {
+		fmt.Println("  ⏸️  xdebug is disabled")
+	}
+}
+
+// ensureIniValue ensures a key=value line exists after the given anchor index.
+// If it already exists, updates the value. Otherwise inserts after anchor.
+func ensureIniValue(lines []string, anchorIdx int, key, value string) []string {
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, key) {
+			parts := strings.SplitN(trimmed, "=", 2)
+			if len(parts) == 2 {
+				lines[i] = key + "=" + value
+				return lines
+			}
+		}
+	}
+	// Not found — insert after anchor
+	insert := key + "=" + value
+	after := anchorIdx + 1
+	lines = append(lines, "")
+	copy(lines[after+1:], lines[after:])
+	lines[after] = insert
+	return lines
+}
+
+// writeIni writes lines back to the php.ini file.
+func writeIni(path string, lines []string) {
+	content := strings.Join(lines, "\n")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", path, err)
+		os.Exit(1)
+	}
+}
+
+// zendExtensions lists extensions that use zend_extension= instead of extension=.
+var zendExtensions = map[string]bool{
+	"xdebug":  true,
+	"opcache": true,
+}
+
+// cmdExt handles the "ext" subcommand for PHP extension management.
+//
+// Usage:
+//
+//	flock ext install <name> [--php=8.4] [--ext-version=1.0.0] [--ts]
+//	flock ext list [--php=8.4]
+func cmdExt() {
+	if len(os.Args) < 3 {
+		extUsage()
+		return
+	}
+
+	switch os.Args[2] {
+	case "install":
+		cmdExtInstall()
+	case "list":
+		cmdExtList()
+	case "-h", "--help":
+		extUsage()
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown ext command: %s\n", os.Args[2])
+		extUsage()
+		os.Exit(1)
+	}
+}
+
+func extUsage() {
+	fmt.Println("Usage: flock ext <command>")
+	fmt.Println()
+	fmt.Println("Commands:")
+	fmt.Println("  install <name>  Install a PHP extension from PECL")
+	fmt.Println("  list            List installed extensions")
+	fmt.Println()
+	fmt.Println("Install options:")
+	fmt.Println("  --php=X.Y         Target PHP version (default: resolved from .phpversion)")
+	fmt.Println("  --ext-version=V   Extension version (default: latest from PECL)")
+	fmt.Println("  --ts              Use Thread Safe build (default: NTS)")
+	fmt.Println("  --vs=vsXX         Visual Studio version (default: vs17)")
+}
+
+// cmdExtInstall installs a PHP extension from PECL.
+func cmdExtInstall() {
+	if len(os.Args) < 4 {
+		fmt.Fprintf(os.Stderr, "Error: extension name required\n")
+		fmt.Fprintf(os.Stderr, "Usage: flock ext install <name> [options]\n")
+		os.Exit(1)
+	}
+
+	extName := os.Args[3]
+	phpVersion := ""
+	extVersion := ""
+	vsVersion := "vs17"
+	threadSafe := false
+
+	// Parse flags after the extension name
+	for _, arg := range os.Args[4:] {
+		switch {
+		case strings.HasPrefix(arg, "--php="):
+			phpVersion = strings.TrimPrefix(arg, "--php=")
+		case strings.HasPrefix(arg, "--ext-version="):
+			extVersion = strings.TrimPrefix(arg, "--ext-version=")
+		case strings.HasPrefix(arg, "--vs="):
+			vsVersion = strings.TrimPrefix(arg, "--vs=")
+		case arg == "--ts":
+			threadSafe = true
+		case arg == "-h" || arg == "--help":
+			extUsage()
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown option: %s\n", arg)
+			os.Exit(1)
+		}
+	}
+
+	// Resolve PHP version
+	if phpVersion == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
+			os.Exit(1)
+		}
+		phpVersion = findPHPVersion(cwd)
+		if phpVersion == "" {
+			fmt.Fprintf(os.Stderr, "Error: no .phpversion found and --php not specified\n")
+			os.Exit(1)
+		}
+	}
+
+	if !versionRe.MatchString(phpVersion) {
+		fmt.Fprintf(os.Stderr, "Error: invalid PHP version format: %q (expected X.Y)\n", phpVersion)
+		os.Exit(1)
+	}
+
+	nodot := strings.ReplaceAll(phpVersion, ".", "")
+	phpDir := filepath.Join(herdHome(), "php"+nodot)
+	phpExe := filepath.Join(phpDir, "php.exe")
+
+	if _, err := os.Stat(phpExe); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: PHP %s not found at %s\n", phpVersion, phpDir)
+		os.Exit(1)
+	}
+
+	fmt.Printf("PHP %s — %s\n", phpVersion, phpDir)
+
+	// Detect extension version from PECL if not specified
+	if extVersion == "" {
+		var err error
+		extVersion, err = detectPeclVersion(extName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	fmt.Printf("Extension: %s %s\n", extName, extVersion)
+
+	// Build download URL
+	ts := "nts"
+	if threadSafe {
+		ts = "ts"
+	}
+	zipName := fmt.Sprintf("php_%s-%s-%s-%s-%s-x64.zip", extName, extVersion, phpVersion, ts, vsVersion)
+	downloadURL := fmt.Sprintf("https://downloads.php.net/~windows/pecl/releases/%s/%s/%s", extName, extVersion, zipName)
+
+	fmt.Printf("Downloading: %s\n", downloadURL)
+
+	// Download
+	zipPath, err := downloadFile(downloadURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error downloading: %v\n", err)
+		fmt.Fprintf(os.Stderr, "\nVerify the extension/version/PHP combination is available at:\n")
+		fmt.Fprintf(os.Stderr, "  https://pecl.php.net/package/%s/%s/windows\n", extName, extVersion)
+		os.Exit(1)
+	}
+	defer os.Remove(zipPath)
+
+	fmt.Println("Download OK.")
+
+	// Extract and install
+	extDir := filepath.Join(phpDir, "ext")
+	if err := os.MkdirAll(extDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating ext directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	installed, err := installExtFiles(zipPath, extName, phpDir, extDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error installing: %v\n", err)
+		os.Exit(1)
+	}
+
+	if !installed {
+		fmt.Fprintf(os.Stderr, "Warning: no php_%s.dll found in archive\n", extName)
+	}
+
+	// Update php.ini
+	iniPath := filepath.Join(phpDir, "php.ini")
+	if err := addExtensionToIni(iniPath, extName); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Add manually: extension=%s\n", extName)
+	}
+
+	// Verify
+	fmt.Println()
+	fmt.Println("Verifying...")
+	if verifyExtension(phpExe, extDir, extName) {
+		fmt.Printf("✅ %s %s installed for PHP %s\n", extName, extVersion, phpVersion)
+	} else {
+		fmt.Printf("⚠️  %s may not be loaded correctly. Verify with:\n", extName)
+		fmt.Printf("   php -m | findstr %s\n", extName)
+	}
+}
+
+// detectPeclVersion scrapes pecl.php.net to find the latest stable version.
+func detectPeclVersion(extName string) (string, error) {
+	url := "https://pecl.php.net/package/" + extName
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("cannot reach pecl.php.net: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("extension %q not found on pecl.php.net (HTTP %d)", extName, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("error reading pecl page: %w", err)
+	}
+
+	// Look for the first version link like /package/extname/1.2.3
+	re := regexp.MustCompile(`/package/` + regexp.QuoteMeta(extName) + `/(\d+\.\d+\.\d+)`)
+	m := re.FindSubmatch(body)
+	if len(m) < 2 {
+		return "", fmt.Errorf("could not detect latest version for %q on pecl.php.net", extName)
+	}
+	return string(m[1]), nil
+}
+
+// downloadFile downloads a URL to a temp file and returns the path.
+func downloadFile(url string) (string, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("HTTP %d for %s", resp.StatusCode, url)
+	}
+
+	tmpFile, err := os.CreateTemp("", "flock-ext-*.zip")
+	if err != nil {
+		return "", err
+	}
+
+	_, err = io.Copy(tmpFile, resp.Body)
+	tmpFile.Close()
+	if err != nil {
+		os.Remove(tmpFile.Name())
+		return "", err
+	}
+	return tmpFile.Name(), nil
+}
+
+// installExtFiles extracts the zip and places files in the correct locations.
+// Extension DLLs (php_<name>.dll/pdb) go to extDir.
+// Support DLLs/EXEs go to phpDir (next to php.exe).
+// Returns true if the main extension DLL was found.
+func installExtFiles(zipPath, extName, phpDir, extDir string) (bool, error) {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return false, err
+	}
+	defer r.Close()
+
+	extDLLPattern := regexp.MustCompile(`(?i)^php_` + regexp.QuoteMeta(extName) + `\.(dll|pdb)$`)
+	foundExtDLL := false
+
+	for _, f := range r.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+
+		name := path.Base(f.Name)
+		lowerName := strings.ToLower(name)
+
+		var destDir string
+		if extDLLPattern.MatchString(name) {
+			// Main extension DLL/PDB → ext/
+			destDir = extDir
+			foundExtDLL = true
+		} else if strings.HasSuffix(lowerName, ".dll") || strings.HasSuffix(lowerName, ".pdb") || strings.HasSuffix(lowerName, ".exe") {
+			// Support files → php dir
+			destDir = phpDir
+		} else {
+			// Skip non-binary files (docs, etc.)
+			continue
+		}
+
+		destPath := filepath.Join(destDir, name)
+		if err := extractZipFile(f, destPath); err != nil {
+			return false, fmt.Errorf("extracting %s: %w", name, err)
+		}
+		fmt.Printf("  → %s\n", destPath)
+	}
+
+	return foundExtDLL, nil
+}
+
+// extractZipFile extracts a single file from a zip archive.
+func extractZipFile(f *zip.File, destPath string) error {
+	rc, err := f.Open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, rc)
+	return err
+}
+
+// addExtensionToIni adds extension= or zend_extension= to php.ini if not already present.
+func addExtensionToIni(iniPath, extName string) error {
+	data, err := os.ReadFile(iniPath)
+	if err != nil {
+		return fmt.Errorf("php.ini not found at %s", iniPath)
+	}
+
+	content := string(data)
+	directive := "extension"
+	if zendExtensions[extName] {
+		directive = "zend_extension"
+	}
+
+	// Check if already present (active or commented)
+	checkRe := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(directive) + `\s*=\s*` + regexp.QuoteMeta(extName))
+	if checkRe.MatchString(content) {
+		fmt.Printf("  %s=%s already in php.ini\n", directive, extName)
+		return nil
+	}
+
+	// Append
+	content += "\n" + directive + "=" + extName + "\n"
+	if err := os.WriteFile(iniPath, []byte(content), 0644); err != nil {
+		return err
+	}
+	fmt.Printf("  ✅ Added %s=%s to php.ini\n", directive, extName)
+	return nil
+}
+
+// verifyExtension runs php -m and checks if the extension is loaded.
+func verifyExtension(phpExe, extDir, extName string) bool {
+	cmd := exec.Command(phpExe, "-d", "extension_dir="+extDir, "-m")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(string(out)), strings.ToLower(extName))
+}
+
+// cmdExtList shows extensions installed in the ext/ directory for the resolved PHP.
+func cmdExtList() {
+	phpVersion := ""
+
+	// Parse flags
+	for _, arg := range os.Args[3:] {
+		if strings.HasPrefix(arg, "--php=") {
+			phpVersion = strings.TrimPrefix(arg, "--php=")
+		}
+	}
+
+	if phpVersion == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
+			os.Exit(1)
+		}
+		phpVersion = findPHPVersion(cwd)
+		if phpVersion == "" {
+			// Fallback to most recent
+			php, err := mostRecentPHP()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			phpVersion = extractVersion(php)
+		}
+	}
+
+	if phpVersion == "" {
+		fmt.Fprintf(os.Stderr, "Error: could not determine PHP version\n")
+		os.Exit(1)
+	}
+
+	nodot := strings.ReplaceAll(phpVersion, ".", "")
+	phpDir := filepath.Join(herdHome(), "php"+nodot)
+	extDir := filepath.Join(phpDir, "ext")
+
+	fmt.Printf("PHP %s extensions (%s):\n\n", phpVersion, extDir)
+
+	entries, err := os.ReadDir(extDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading ext directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	extRe := regexp.MustCompile(`(?i)^php_(.+)\.dll$`)
+	count := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		m := extRe.FindStringSubmatch(e.Name())
+		if len(m) == 2 {
+			fmt.Printf("  • %s\n", m[1])
+			count++
+		}
+	}
+	fmt.Printf("\n%d extension(s) installed.\n", count)
+}
