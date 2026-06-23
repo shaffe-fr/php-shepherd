@@ -253,6 +253,9 @@ func main() {
 			case "self-update":
 				cmdSelfUpdate()
 				return
+			case "doctor":
+				cmdDoctor()
+				return
 			case "version", "--version", "-v":
 				fmt.Printf("flock %s\n", version)
 				return
@@ -264,6 +267,7 @@ func main() {
 		fmt.Println("  install     Install php.exe and composer.exe shims and configure PATH")
 		fmt.Println("  uninstall   Remove shims and restore PATH")
 		fmt.Println("  status      Show current PATH configuration status")
+		fmt.Println("  doctor      Diagnose common issues with flock setup")
 		fmt.Println("  xdebug      Toggle xdebug on/off for the current PHP version")
 		fmt.Println("  ext         Install PHP extensions from PECL")
 		fmt.Println("  self-update Update flock to the latest version")
@@ -1358,6 +1362,223 @@ const githubRepo = "shaffe-fr/php-flock"
 var allowedDownloadHosts = map[string]bool{
 	"github.com":               true,
 	"objects.githubusercontent.com": true,
+}
+
+// cmdDoctor diagnoses common issues that prevent flock from working correctly.
+func cmdDoctor() {
+	fmt.Println("flock doctor")
+	fmt.Println()
+
+	issues := 0
+
+	// 1. Check .phpversion in cwd
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Printf("  ✗ Cannot get working directory: %v\n", err)
+		issues++
+	} else {
+		ver := findPHPVersion(cwd)
+		if ver != "" {
+			// Validate that the PHP binary exists
+			_, resolveErr := resolveFromVersion(ver)
+			if resolveErr != nil {
+				fmt.Printf("  ✗ .phpversion requests PHP %s, but it is not installed\n", ver)
+				fmt.Printf("    → Install PHP %s via Herd, or change .phpversion\n", ver)
+				issues++
+			} else {
+				fmt.Printf("  ✓ .phpversion: %s (installed)\n", ver)
+			}
+		} else {
+			fmt.Printf("  • No .phpversion found (will use Herd global)\n")
+		}
+	}
+
+	// 2. Check shims exist
+	dir := shimDir()
+	phpShim := filepath.Join(dir, "php.exe")
+	composerShim := filepath.Join(dir, "composer.exe")
+
+	if _, err := os.Stat(phpShim); err != nil {
+		fmt.Printf("  ✗ php.exe shim not found at %s\n", phpShim)
+		fmt.Printf("    → Run: flock install\n")
+		issues++
+	} else {
+		fmt.Printf("  ✓ php.exe shim installed\n")
+	}
+
+	if _, err := os.Stat(composerShim); err != nil {
+		fmt.Printf("  ✗ composer.exe shim not found at %s\n", composerShim)
+		fmt.Printf("    → Run: flock install\n")
+		issues++
+	} else {
+		fmt.Printf("  ✓ composer.exe shim installed\n")
+	}
+
+	// 3. Check PATH order (User PATH from registry)
+	userPath, _, _, pathErr := getUserPath()
+	if pathErr != nil {
+		fmt.Printf("  ✗ Cannot read User PATH: %v\n", pathErr)
+		issues++
+	} else {
+		entries := strings.Split(userPath, ";")
+		shimIndex := -1
+		herdIndex := -1
+		herdBin := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "bin")
+
+		for i, e := range entries {
+			clean := strings.TrimRight(e, `\`)
+			if strings.EqualFold(clean, strings.TrimRight(dir, `\`)) {
+				shimIndex = i
+			}
+			if strings.EqualFold(clean, herdBin) {
+				herdIndex = i
+			}
+		}
+
+		if shimIndex == -1 {
+			fmt.Printf("  ✗ Flock shim directory is NOT in User PATH\n")
+			fmt.Printf("    → Run: flock install\n")
+			issues++
+		} else if herdIndex != -1 && shimIndex > herdIndex {
+			fmt.Printf("  ✗ Flock is AFTER Herd in PATH (position %d vs %d)\n", shimIndex+1, herdIndex+1)
+			fmt.Printf("    → Run: flock install\n")
+			issues++
+		} else {
+			fmt.Printf("  ✓ PATH order: flock is before Herd\n")
+		}
+	}
+
+	// 4. Check for shell aliases that override flock
+	aliasIssues := doctorCheckAliases()
+	issues += aliasIssues
+
+	// 5. Check that where.exe php resolves to flock shim first
+	whereOut, err := exec.Command("where.exe", "php").Output()
+	if err == nil {
+		whereLines := strings.Split(strings.TrimSpace(string(whereOut)), "\r\n")
+		if len(whereLines) > 0 {
+			first := strings.TrimSpace(whereLines[0])
+			if strings.EqualFold(first, phpShim) {
+				fmt.Printf("  ✓ where.exe php → flock shim (first result)\n")
+			} else {
+				fmt.Printf("  ✗ where.exe php resolves to: %s\n", first)
+				if strings.HasSuffix(strings.ToLower(first), ".bat") {
+					fmt.Printf("    → A .bat file takes priority over flock. Check your PATH or System PATH.\n")
+				} else {
+					fmt.Printf("    → Expected: %s\n", phpShim)
+				}
+				issues++
+			}
+		}
+	}
+
+	// Summary
+	fmt.Println()
+	if issues == 0 {
+		fmt.Println("  No issues found. flock should be working correctly.")
+	} else {
+		fmt.Printf("  Found %d issue(s). Fix them and run 'flock doctor' again.\n", issues)
+	}
+}
+
+// doctorCheckAliases scans common shell config files for aliases that override php/composer.
+func doctorCheckAliases() int {
+issues := 0
+home := os.Getenv("USERPROFILE")
+
+// Files to scan for alias definitions
+configFiles := []string{
+// Bash
+filepath.Join(home, ".bash_aliases"),
+filepath.Join(home, ".bashrc"),
+filepath.Join(home, ".bash_profile"),
+filepath.Join(home, ".profile"),
+// Zsh
+filepath.Join(home, ".zshrc"),
+filepath.Join(home, ".zprofile"),
+filepath.Join(home, ".zshenv"),
+filepath.Join(home, ".zsh", "aliases.zsh"),
+// PowerShell
+filepath.Join(home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1"),
+filepath.Join(home, "Documents", "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1"),
+// Git Bash (MSYS2/MinGW)
+filepath.Join(home, ".config", "git", "bash_profile"),
+// Cmder / ConEmu
+filepath.Join(home, ".config", "cmder", "user_aliases.cmd"),
+// Clink
+filepath.Join(home, ".config", "clink", "clink_start.cmd"),
+// Nushell
+filepath.Join(home, "AppData", "Roaming", "nushell", "config.nu"),
+filepath.Join(home, "AppData", "Roaming", "nushell", "env.nu"),
+}
+
+// Patterns that indicate a problematic alias
+aliasRe := regexp.MustCompile(`(?m)^\s*alias\s+(php|composer)\s*=`)
+// PowerShell-style: Set-Alias php ... or New-Alias php ...
+psAliasRe := regexp.MustCompile(`(?mi)^\s*(Set-Alias|New-Alias|sal|nal)\s+(php|composer)\b`)
+// Nushell-style: alias php = ... (same syntax as bash but included for clarity)
+nuAliasRe := regexp.MustCompile(`(?m)^\s*(?:export\s+)?alias\s+(php|composer)\s*=`)
+// Pattern for conditional aliases (guarded by flock check) — these are fine
+guardRe := regexp.MustCompile(`(?mi)command\s+-v\s+flock|\$\+commands\[flock\]|Get-Command\s+flock|flock`)
+
+for _, configFile := range configFiles {
+data, err := os.ReadFile(configFile)
+if err != nil {
+continue // File doesn't exist, skip
+}
+
+content := string(data)
+
+// Check if there's a flock guard anywhere in the file
+hasGuard := guardRe.MatchString(content)
+
+// Collect all alias matches from different patterns
+type aliasMatch struct {
+cmd string
+}
+var found []aliasMatch
+
+for _, m := range aliasRe.FindAllStringSubmatch(content, -1) {
+if len(m) > 1 {
+found = append(found, aliasMatch{cmd: m[1]})
+}
+}
+for _, m := range psAliasRe.FindAllStringSubmatch(content, -1) {
+if len(m) > 2 {
+found = append(found, aliasMatch{cmd: m[2]})
+}
+}
+for _, m := range nuAliasRe.FindAllStringSubmatch(content, -1) {
+if len(m) > 1 {
+found = append(found, aliasMatch{cmd: m[1]})
+}
+}
+
+if len(found) == 0 || hasGuard {
+continue
+}
+
+// Found unguarded alias(es)
+relPath := strings.TrimPrefix(configFile, home)
+relPath = strings.TrimPrefix(relPath, string(os.PathSeparator))
+
+seen := map[string]bool{}
+for _, f := range found {
+if seen[f.cmd] {
+continue
+}
+seen[f.cmd] = true
+fmt.Printf("  ✗ Shell alias found: %s is aliased in ~\\%s\n", f.cmd, relPath)
+fmt.Printf("    → This overrides flock. Remove the alias or guard it.\n")
+issues++
+}
+}
+
+if issues == 0 {
+fmt.Printf("  ✓ No conflicting shell aliases found\n")
+}
+
+return issues
 }
 
 // cmdSelfUpdate checks for a newer release on GitHub and updates the binary.

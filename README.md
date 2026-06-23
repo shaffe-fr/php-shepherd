@@ -120,6 +120,7 @@ When the version in `.phpversion` differs from what's configured in Herd's nginx
 | `flock install` | Install the `php`/`composer` shims and prepend them to the User PATH |
 | `flock uninstall` | Remove the shims and clean up the PATH |
 | `flock status` | Show whether the shims are installed and ordered correctly relative to Herd |
+| `flock doctor` | Diagnose common issues with flock setup |
 | `flock xdebug [mode]` | Toggle xdebug on/off for the resolved PHP version |
 | `flock ext install <name>` | Install a PHP extension from PECL |
 | `flock ext list` | List installed extensions for the resolved PHP |
