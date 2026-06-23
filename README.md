@@ -123,8 +123,7 @@ When the version in `.phpversion` differs from what's configured in Herd's nginx
 | `shp use [version]` | Set the PHP version for the current project, or list available versions |
 | `shp status` | Show current PHP version and configuration |
 | `shp xdebug [mode]` | Toggle xdebug on/off for the resolved PHP version |
-| `shp ext install <name>` | Install a PHP extension from PECL |
-| `shp ext list` | List installed extensions for the resolved PHP |
+| `shp ext add <name>` | Add a PHP extension from PECL |
 | `shp install` | Install the `php`/`composer` shims and prepend them to the User PATH |
 | `shp uninstall` | Remove the shims and clean up the PATH |
 | `shp doctor` | Diagnose common issues with Shepherd setup |
@@ -197,14 +196,17 @@ Xdebug adds overhead, so toggling it off when you don't need it keeps things fas
 
 ## Extension management
 
-Install PHP extensions from PECL directly into the resolved Herd PHP version:
+Install PHP extensions that aren't bundled with Herd for Windows:
 
 ```powershell
-shp ext install imagick
-shp ext install redis --php=8.4
-shp ext install mongodb --ext-version=1.19.0
-shp ext list
+shp ext add imagick
+shp ext add redis --php=8.4
+shp ext add sqlsrv
 ```
+
+Supported extensions: `igbinary`, `imagick`, `memcached`, `pdo_sqlsrv`, `redis`, `sqlsrv`.
+
+The command handles the entire installation — downloading the extension DLL, placing support libraries (like ImageMagick's DLLs) next to `php.exe`, and registering the extension in `php.ini`.
 
 ### Options
 
@@ -214,16 +216,6 @@ shp ext list
 | `--ext-version=V` | Extension version (default: latest from PECL) |
 | `--ts` | Use Thread Safe build (default: NTS) |
 | `--vs=vsXX` | Visual Studio version (default: vs17) |
-
-### What it does
-
-1. Resolves the PHP version (from `.phpversion` or `--php`)
-2. Detects the latest extension version on [pecl.php.net](https://pecl.php.net) (or uses `--ext-version`)
-3. Downloads the pre-compiled NTS x64 zip from `downloads.php.net`
-4. Extracts the extension DLL (`php_<name>.dll`) into the `ext/` directory
-5. Places support DLLs (e.g. ImageMagick's `CORE_*.dll`) next to `php.exe`
-6. Adds `extension=<name>` (or `zend_extension=` for xdebug/opcache) to `php.ini`
-7. Verifies the extension loads via `php -m`
 
 ## Multicall binary
 

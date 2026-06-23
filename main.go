@@ -293,7 +293,7 @@ func main() {
 		fmt.Println("  use         Set the PHP version for the current project (.phpversion)")
 		fmt.Println("  status      Show current PHP version and configuration")
 		fmt.Println("  xdebug      Toggle xdebug on/off for the current PHP version")
-		fmt.Println("  ext         Install PHP extensions from PECL")
+		fmt.Println("  ext         Add PHP extensions from PECL")
 		fmt.Println("  install     Install php.exe and composer.exe shims and configure PATH")
 		fmt.Println("  uninstall   Remove shims and restore PATH")
 		fmt.Println("  doctor      Diagnose common issues with Shepherd setup")
@@ -1058,8 +1058,7 @@ var zendExtensions = map[string]bool{
 //
 // Usage:
 //
-//	shp ext install <name> [--php=8.4] [--ext-version=1.0.0] [--ts]
-//	shp ext list [--php=8.4]
+//	shp ext add <name> [--php=8.4] [--ext-version=1.0.0] [--ts]
 func cmdExt() {
 	if len(os.Args) < 3 {
 		extUsage()
@@ -1067,10 +1066,8 @@ func cmdExt() {
 	}
 
 	switch os.Args[2] {
-	case "install":
+	case "add":
 		cmdExtInstall()
-	case "list":
-		cmdExtList()
 	case "-h", "--help":
 		extUsage()
 	default:
@@ -1081,13 +1078,14 @@ func cmdExt() {
 }
 
 func extUsage() {
-	fmt.Println("Usage: shp ext <command>")
+	fmt.Println("Usage: shp ext add <name> [options]")
 	fmt.Println()
-	fmt.Println("Commands:")
-	fmt.Println("  install <name>  Install a PHP extension from PECL")
-	fmt.Println("  list            List installed extensions")
+	fmt.Println("Add a PHP extension from PECL.")
 	fmt.Println()
-	fmt.Println("Install options:")
+	fmt.Println("Supported extensions:")
+	fmt.Printf("  %s\n", strings.Join(listSupportedExtensions(), ", "))
+	fmt.Println()
+	fmt.Println("Options:")
 	fmt.Println("  --php=X.Y         Target PHP version (default: resolved from .phpversion)")
 	fmt.Println("  --ext-version=V   Extension version (default: latest from PECL)")
 	fmt.Println("  --ts              Use Thread Safe build (default: NTS)")
@@ -1098,11 +1096,23 @@ func extUsage() {
 func cmdExtInstall() {
 	if len(os.Args) < 4 {
 		fmt.Fprintf(os.Stderr, "Error: extension name required\n")
-		fmt.Fprintf(os.Stderr, "Usage: shp ext install <name> [options]\n")
+		fmt.Fprintf(os.Stderr, "Usage: shp ext add <name> [options]\n")
 		os.Exit(1)
 	}
 
 	extName := os.Args[3]
+
+	// Validate against supported extensions
+	extDef, ok := extensionRegistry[strings.ToLower(extName)]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "Error: '%s' is not a supported extension.\n\n", extName)
+		fmt.Fprintf(os.Stderr, "Supported extensions:\n")
+		fmt.Fprintf(os.Stderr, "  %s\n", strings.Join(listSupportedExtensions(), ", "))
+		fmt.Fprintf(os.Stderr, "\nOpen an issue to request support for a new extension:\n")
+		fmt.Fprintf(os.Stderr, "  https://github.com/shaffe-fr/php-shepherd/issues\n")
+		os.Exit(1)
+	}
+	extName = extDef.name
 	phpVersion := ""
 	extVersion := ""
 	vsVersion := "vs17"
@@ -1170,17 +1180,27 @@ func cmdExtInstall() {
 
 	fmt.Printf("Extension: %s %s\n", extName, extVersion)
 
+	// Install system-level dependencies via winget (e.g. ODBC Driver for sqlsrv)
+	if len(extDef.wingetDeps) > 0 {
+		fmt.Println("Checking system dependencies...")
+		if err := installWingetDeps(extDef.wingetDeps); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			fmt.Fprintf(os.Stderr, "  The extension may not work without this dependency.\n")
+		}
+		fmt.Println()
+	}
+
 	// Build download URL
 	ts := "nts"
 	if threadSafe {
 		ts = "ts"
 	}
-	zipName := fmt.Sprintf("php_%s-%s-%s-%s-%s-x64.zip", extName, extVersion, phpVersion, ts, vsVersion)
-	downloadURL := fmt.Sprintf("https://downloads.php.net/~windows/pecl/releases/%s/%s/%s", extName, extVersion, zipName)
+	arch := "x64"
+	downloadURL := buildExtURL(extDef.source.urlPattern, extVersion, phpVersion, ts, vsVersion, arch)
 
 	fmt.Printf("Downloading: %s\n", downloadURL)
 
-	// Download
+	// Download extension zip
 	zipPath, err := downloadFile(downloadURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error downloading: %v\n", err)
@@ -1209,11 +1229,30 @@ func cmdExtInstall() {
 		fmt.Fprintf(os.Stderr, "Warning: no php_%s.dll found in archive\n", extName)
 	}
 
+	// Download and install dependency libraries (e.g. ImageMagick DLLs for imagick)
+	if extDef.source.depsURLPattern != "" {
+		depsURL := buildExtURL(extDef.source.depsURLPattern, extVersion, phpVersion, ts, vsVersion, arch)
+		fmt.Printf("Downloading dependencies: %s\n", depsURL)
+
+		depsZipPath, err := downloadFile(depsURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to download dependencies: %v\n", err)
+			fmt.Fprintf(os.Stderr, "  You may need to install support libraries manually.\n")
+		} else {
+			defer os.Remove(depsZipPath)
+			if _, err := installExtFiles(depsZipPath, extName, phpDir, extDir); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to install dependencies: %v\n", err)
+			} else {
+				fmt.Println("Dependencies installed.")
+			}
+		}
+	}
+
 	// Update php.ini
 	iniPath := filepath.Join(phpDir, "php.ini")
 	if err := addExtensionToIni(iniPath, extName); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Add manually: extension=%s\n", extName)
+		fmt.Fprintf(os.Stderr, "Add manually: %s=%s\n", extDef.directive, extName)
 	}
 
 	// Verify
@@ -1224,6 +1263,12 @@ func cmdExtInstall() {
 	} else {
 		fmt.Printf("⚠️  %s may not be loaded correctly. Verify with:\n", extName)
 		fmt.Printf("   php -m | findstr %s\n", extName)
+	}
+
+	// Show post-install message if any (e.g. external dependencies)
+	if extDef.postInstallMsg != "" {
+		fmt.Println()
+		fmt.Printf("  Note: %s\n", extDef.postInstallMsg)
 	}
 }
 
@@ -1396,7 +1441,9 @@ func addExtensionToIni(iniPath, extName string) error {
 
 	content := string(data)
 	directive := "extension"
-	if zendExtensions[extName] {
+	if def, ok := extensionRegistry[extName]; ok && def.directive != "" {
+		directive = def.directive
+	} else if zendExtensions[extName] {
 		directive = "zend_extension"
 	}
 
@@ -1424,67 +1471,6 @@ func verifyExtension(phpExe, extDir, extName string) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(string(out)), strings.ToLower(extName))
-}
-
-// cmdExtList shows extensions installed in the ext/ directory for the resolved PHP.
-func cmdExtList() {
-	phpVersion := ""
-
-	// Parse flags
-	for _, arg := range os.Args[3:] {
-		if strings.HasPrefix(arg, "--php=") {
-			phpVersion = strings.TrimPrefix(arg, "--php=")
-		}
-	}
-
-	if phpVersion == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
-			os.Exit(1)
-		}
-		phpVersion = findPHPVersion(cwd)
-		if phpVersion == "" {
-			// Fallback to most recent
-			php, err := mostRecentPHP()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			phpVersion = extractVersion(php)
-		}
-	}
-
-	if phpVersion == "" {
-		fmt.Fprintf(os.Stderr, "Error: could not determine PHP version\n")
-		os.Exit(1)
-	}
-
-	nodot := strings.ReplaceAll(phpVersion, ".", "")
-	phpDir := filepath.Join(herdHome(), "php"+nodot)
-	extDir := filepath.Join(phpDir, "ext")
-
-	fmt.Printf("PHP %s extensions (%s):\n\n", phpVersion, extDir)
-
-	entries, err := os.ReadDir(extDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading ext directory: %v\n", err)
-		os.Exit(1)
-	}
-
-	extRe := regexp.MustCompile(`(?i)^php_(.+)\.dll$`)
-	count := 0
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		m := extRe.FindStringSubmatch(e.Name())
-		if len(m) == 2 {
-			fmt.Printf("  • %s\n", m[1])
-			count++
-		}
-	}
-	fmt.Printf("\n%d extension(s) installed.\n", count)
 }
 
 // githubRelease represents a GitHub release API response.
