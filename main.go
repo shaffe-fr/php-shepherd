@@ -323,6 +323,9 @@ func main() {
 			case "doctor":
 				cmdDoctor()
 				return
+			case "list", "ls":
+				cmdList()
+				return
 			case "version", "--version", "-v":
 				fmt.Printf("shp %s\n", version)
 				return
@@ -332,6 +335,7 @@ func main() {
 		fmt.Println()
 		fmt.Println("Commands:")
 		fmt.Println("  use         Set the PHP version for the current project (.phpversion)")
+		fmt.Println("  list        List available PHP versions")
 		fmt.Println("  status      Show current PHP version and configuration")
 		fmt.Println("  xdebug      Toggle xdebug on/off for the current PHP version")
 		fmt.Println("  ext         Add PHP extensions from PECL")
@@ -340,6 +344,10 @@ func main() {
 		fmt.Println("  doctor      Diagnose common issues with Shepherd setup")
 		fmt.Println("  self-update Update Shepherd to the latest version")
 		fmt.Println("  version     Show current Shepherd version")
+		fmt.Println()
+		fmt.Println("Global flags:")
+		fmt.Println("  --verbose   Show extra diagnostic output")
+		fmt.Println("  --quiet     Suppress non-essential output")
 		fmt.Println()
 		fmt.Println("When invoked as php.exe or composer.exe, acts as a transparent PHP version switcher.")
 		return
@@ -459,6 +467,50 @@ func broadcastSettingChange() {
 	env, _ := syscall.UTF16PtrFromString("Environment")
 	// HWND_BROADCAST=0xFFFF, WM_SETTINGCHANGE=0x001A, SMTO_ABORTIFHUNG=0x0002
 	sendMessageTimeout.Call(0xFFFF, 0x001A, 0, uintptr(unsafe.Pointer(env)), 0x0002, 5000, 0)
+}
+
+// cmdList lists available PHP versions (dedicated command for discoverability).
+func cmdList() {
+	requireHerd()
+	pattern := filepath.Join(herdHome(), "php*")
+	matches, err := filepath.Glob(pattern)
+	if err != nil || len(matches) == 0 {
+		fmt.Fprintf(os.Stderr, "No PHP versions found in %s\n", herdHome())
+		os.Exit(1)
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		return phpDirVersion(matches[i]) < phpDirVersion(matches[j])
+	})
+
+	cwd, _ := os.Getwd()
+	currentVersion := ""
+	if cwd != "" {
+		currentVersion = findPHPVersion(cwd)
+	}
+
+	fmt.Println("Available PHP versions:")
+	fmt.Println()
+	for _, m := range matches {
+		dirName := filepath.Base(m)
+		v := phpDirVersion(m)
+		if v < 0 {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(m, "php.exe")); err != nil {
+			continue
+		}
+		dm := phpDirRe.FindStringSubmatch(dirName)
+		if len(dm) != 3 {
+			continue
+		}
+		ver := dm[1] + "." + dm[2]
+		if ver == currentVersion {
+			fmt.Printf("  → %s (active)\n", ver)
+		} else {
+			fmt.Printf("    %s\n", ver)
+		}
+	}
 }
 
 // cmdUse sets or displays the PHP version for the current project.
