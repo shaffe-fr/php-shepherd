@@ -172,10 +172,14 @@ func syncNginx(projectDir, version string) {
 	reIsolated := regexp.MustCompile(`(?m)^# ISOLATED_PHP_VERSION=.*$`)
 	content = reIsolated.ReplaceAllString(content, "# ISOLATED_PHP_VERSION="+version)
 
-	// Update herd_sock_XX references
+	// Update herd_sock references (with or without version suffix)
 	nodot := strings.ReplaceAll(version, ".", "")
-	reSock := regexp.MustCompile(`\$herd_sock_\d+`)
+	reSock := regexp.MustCompile(`\$herd_sock(?:_\d+)?`)
 	content = reSock.ReplaceAllString(content, "$herd_sock_"+nodot)
+
+	// Repair empty fastcgi_pass directives (left behind by previous buggy rewrites)
+	reEmptyPass := regexp.MustCompile(`(?m)(fastcgi_pass)\s*;`)
+	content = reEmptyPass.ReplaceAllString(content, "fastcgi_pass $herd_sock_"+nodot+";")
 
 	// Write back
 	if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
