@@ -134,6 +134,7 @@ func whichPHP(bootstrapPHP, dir string) (string, error) {
 	herdPhar := filepath.Join(herdHome(), "herd.phar")
 	cmd := exec.Command(bootstrapPHP, herdPhar, "which-php", dir)
 	cmd.Stderr = nil
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("which-php failed: %w", err)
@@ -777,13 +778,17 @@ func killShimProcesses(dir string) {
 	dirLower := strings.ToLower(dir)
 
 	// Get verbose process list (includes image path)
-	out, err := exec.Command("tasklist", "/V", "/FO", "CSV", "/NH").Output()
+	taskCmd := exec.Command("tasklist", "/V", "/FO", "CSV", "/NH")
+	taskCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
+	out, err := taskCmd.Output()
 	if err != nil {
 		return
 	}
 
 	// Also try wmic as fallback for older systems where tasklist /V doesn't show paths
-	wmicOut, _ := exec.Command("wmic", "process", "get", "ProcessId,ExecutablePath", "/format:csv").Output()
+	wmicCmd := exec.Command("wmic", "process", "get", "ProcessId,ExecutablePath", "/format:csv")
+	wmicCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
+	wmicOut, _ := wmicCmd.Output()
 
 	// Build PID→path map from wmic output (best effort)
 	pidPath := make(map[int]string)
@@ -827,8 +832,10 @@ func killShimProcesses(dir string) {
 		p, ok := pidPath[pid]
 		if !ok {
 			// Try PowerShell as fallback to get the process path
-			psOut, psErr := exec.Command("powershell", "-NoProfile", "-Command",
-				fmt.Sprintf("(Get-Process -Id %d -ErrorAction SilentlyContinue).Path", pid)).Output()
+			psCmd := exec.Command("powershell", "-NoProfile", "-Command",
+				fmt.Sprintf("(Get-Process -Id %d -ErrorAction SilentlyContinue).Path", pid))
+			psCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
+			psOut, psErr := psCmd.Output()
 			if psErr == nil {
 				psPath := strings.TrimSpace(string(psOut))
 				if psPath != "" {
@@ -2031,6 +2038,7 @@ func addExtensionToIni(iniPath, extName string) error {
 // verifyExtension runs php -m and checks if the extension is loaded.
 func verifyExtension(phpExe, extDir, extName string) bool {
 	cmd := exec.Command(phpExe, "-d", "extension_dir="+extDir, "-m")
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 	out, err := cmd.Output()
 	if err != nil {
 		return false
@@ -2156,7 +2164,9 @@ func cmdDoctor() {
 	issues += aliasIssues
 
 	// 5. Check that where.exe php resolves to Shepherd shim first
-	whereOut, err := exec.Command("where.exe", "php").Output()
+	whereCmd := exec.Command("where.exe", "php")
+	whereCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
+	whereOut, err := whereCmd.Output()
 	if err == nil {
 		whereLines := strings.Split(strings.TrimSpace(string(whereOut)), "\r\n")
 		if len(whereLines) > 0 {
