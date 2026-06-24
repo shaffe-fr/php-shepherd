@@ -2410,6 +2410,33 @@ func backgroundUpdateCheck() {
 	})
 }
 
+// isNewerVersion returns true if "candidate" is strictly newer than "current".
+// Both must be dot-separated numeric strings (e.g. "0.8.0", "1.2").
+func isNewerVersion(candidate, current string) bool {
+	partsA := strings.Split(candidate, ".")
+	partsB := strings.Split(current, ".")
+	maxLen := len(partsA)
+	if len(partsB) > maxLen {
+		maxLen = len(partsB)
+	}
+	for i := 0; i < maxLen; i++ {
+		a, b := 0, 0
+		if i < len(partsA) {
+			a = mustAtoi(partsA[i])
+		}
+		if i < len(partsB) {
+			b = mustAtoi(partsB[i])
+		}
+		if a > b {
+			return true
+		}
+		if a < b {
+			return false
+		}
+	}
+	return false
+}
+
 // maybeNotifyUpdate prints a one-line update notice if a newer version is known from cache.
 // Returns true if a notice was printed (caller may want to add a blank line after output).
 func maybeNotifyUpdate() bool {
@@ -2418,11 +2445,11 @@ func maybeNotifyUpdate() bool {
 		return false
 	}
 	currentVersion := strings.TrimPrefix(version, "v")
-	if cache.LatestVersion == currentVersion {
-		return false
-	}
 	// Don't notify for dev builds
 	if currentVersion == "dev" {
+		return false
+	}
+	if !isNewerVersion(cache.LatestVersion, currentVersion) {
 		return false
 	}
 	fmt.Fprintf(os.Stderr, "  Update available: %s → %s (run `shp self-update`)\n", currentVersion, cache.LatestVersion)
@@ -3434,6 +3461,12 @@ func cmdSelfUpdate() {
 			}
 		}
 	}
+
+	// Update the cache so the "Update available" notice doesn't linger.
+	writeUpdateCache(updateCheckCache{
+		LatestVersion: latestVersion,
+		CheckedAt:     time.Now().Unix(),
+	})
 
 	fmt.Printf("\n✅ Shepherd updated to %s\n", latestVersion)
 }
