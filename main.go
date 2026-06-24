@@ -1095,6 +1095,13 @@ func cmdInstall() {
 		os.Exit(1)
 	}
 
+	type shimResult struct {
+		Name    string `json:"name"`
+		Path    string `json:"path"`
+		Status  string `json:"status"` // "installed", "up_to_date"
+	}
+	var shims []shimResult
+
 	for _, name := range []string{"php.exe", "composer.exe", "shp.exe"} {
 		dest := filepath.Join(dir, name)
 
@@ -1102,6 +1109,7 @@ func cmdInstall() {
 		existing, err := os.ReadFile(dest)
 		if err == nil && bytes.Equal(existing, selfData) {
 			logInfo("  • %s is up to date\n", dest)
+			shims = append(shims, shimResult{Name: name, Path: dest, Status: "up_to_date"})
 			continue
 		}
 
@@ -1110,6 +1118,7 @@ func cmdInstall() {
 			os.Exit(1)
 		}
 		logInfo("  ✓ Installed %s\n", dest)
+		shims = append(shims, shimResult{Name: name, Path: dest, Status: "installed"})
 	}
 
 	// Configure User PATH
@@ -1146,9 +1155,24 @@ func cmdInstall() {
 	logInfo("  ✓ Added %s to the beginning of User PATH\n", dir)
 
 	// Patch PowerShell profile if it reorders PATH without including Shepherd
-	if patchPowerShellProfile(dir) {
+	profilePatched := patchPowerShellProfile(dir)
+	if profilePatched {
 		logInfo("  ✓ Patched PowerShell profile to source %s\n", shepherdProfilePath())
 		logInfo("    (ensures Shepherd stays first in PATH; reversed by 'shp uninstall')\n")
+	}
+
+	if jsonOutput {
+		result := map[string]interface{}{
+			"shimDir":        dir,
+			"shims":          shims,
+			"pathUpdated":    true,
+			"profilePatched": profilePatched,
+			"profileSnippet": shepherdProfilePath(),
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return
 	}
 
 	logInfo("\n")
