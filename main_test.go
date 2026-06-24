@@ -258,6 +258,16 @@ func TestBuildExtURL(t *testing.T) {
 			arch:       "x64",
 			want:       "https://example.com/810/1.0.0.zip",
 		},
+		{
+			name:       "phpDotVer placeholder keeps the dot",
+			pattern:    "https://example.com/{version}/php_memcached-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
+			version:    "3.4.0",
+			phpVersion: "8.4",
+			ts:         "nts",
+			vs:         "vs17",
+			arch:       "x64",
+			want:       "https://example.com/3.4.0/php_memcached-3.4.0-8.4-nts-vs17-x64.zip",
+		},
 	}
 
 	for _, tt := range tests {

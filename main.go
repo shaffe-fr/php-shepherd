@@ -2111,11 +2111,18 @@ func addExtensionToIni(iniPath, extName string) error {
 func verifyExtension(phpExe, extDir, extName string) bool {
 	cmd := exec.Command(phpExe, "-d", "extension_dir="+extDir, "-m")
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
-	out, err := cmd.Output()
-	if err != nil {
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
 		return false
 	}
-	return strings.Contains(strings.ToLower(string(out)), strings.ToLower(extName))
+	// Check stderr for warnings about our extension failing to load.
+	errOut := strings.ToLower(stderr.String())
+	if strings.Contains(errOut, "unable to load") && strings.Contains(errOut, strings.ToLower(extName)) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(stdout.String()), strings.ToLower(extName))
 }
 
 // githubRelease represents a GitHub release API response.

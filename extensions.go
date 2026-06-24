@@ -84,7 +84,7 @@ var extensionRegistry = map[string]*extDefinition{
 		name:      "memcached",
 		directive: "extension",
 		source: extSource{
-			urlPattern: "https://github.com/lifenglsf/php_memcached_dll/releases/download/nightly/php_memcached-3.3.0-{phpMajMin}-{ts}-{vs}-{arch}.zip",
+			urlPattern: "https://downloads.php.net/~windows/pecl/releases/memcached/{version}/php_memcached-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
 		},
 	},
 }
@@ -95,6 +95,7 @@ func buildExtURL(pattern, version, phpVersion, ts, vs, arch string) string {
 	r := strings.NewReplacer(
 		"{version}", version,
 		"{phpMajMin}", phpMajMin,
+		"{phpDotVer}", phpVersion,
 		"{ts}", ts,
 		"{vs}", vs,
 		"{arch}", arch,
