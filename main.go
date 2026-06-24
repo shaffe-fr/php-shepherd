@@ -1144,6 +1144,12 @@ func cmdInstall() {
 
 	logInfo("\n")
 	logInfo("  ✓ Added %s to the beginning of User PATH\n", dir)
+
+	// Patch PowerShell profile if it reorders PATH without including Shepherd
+	if patchPowerShellProfile(dir) {
+		logInfo("  ✓ Updated PowerShell profile to include Shepherd before Herd\n")
+	}
+
 	logInfo("\n")
 	logInfo("Done! Restart your terminal for the PATH change to take effect.\n")
 }
@@ -2383,6 +2389,8 @@ func cmdDoctor() {
 
 	// 3. Check PATH order (User PATH from registry)
 	userPath, _, pathErr := getUserPath()
+	shimIndex := -1
+	herdIndex := -1
 	if pathErr != nil {
 		if !jsonOutput {
 			fmt.Printf("  ✗ Cannot read User PATH: %v\n", pathErr)
@@ -2391,8 +2399,6 @@ func cmdDoctor() {
 		issues++
 	} else {
 		entries := strings.Split(userPath, ";")
-		shimIndex := -1
-		herdIndex := -1
 		herdBin := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "bin")
 
 		for i, e := range entries {
@@ -2421,7 +2427,7 @@ func cmdDoctor() {
 			issues++
 		} else {
 			if !jsonOutput {
-				fmt.Printf("  ✓ PATH order: Shepherd is before Herd\n")
+				fmt.Printf("  ✓ PATH order (registry): Shepherd is before Herd\n")
 			}
 			addCheck("pathOrder", "ok", "", "")
 		}
@@ -2438,30 +2444,49 @@ func cmdDoctor() {
 	}
 	issues += aliasIssues
 
-	// 5. Check that where.exe php resolves to Shepherd shim first
-	whereCmd := exec.Command("where.exe", "php")
-	whereCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
-	whereOut, err := whereCmd.Output()
-	if err == nil {
-		whereLines := strings.Split(strings.TrimSpace(string(whereOut)), "\r\n")
-		if len(whereLines) > 0 {
-			first := strings.TrimSpace(whereLines[0])
-			if strings.EqualFold(first, phpShim) {
-				if !jsonOutput {
-					fmt.Printf("  ✓ where.exe php → Shepherd shim (first result)\n")
-				}
-				addCheck("wherePhp", "ok", first, "")
-			} else {
-				if !jsonOutput {
-					fmt.Printf("  ✗ where.exe php resolves to: %s\n", first)
-					if strings.HasSuffix(strings.ToLower(first), ".bat") {
-						fmt.Printf("    → A .bat file takes priority over Shepherd. Check your PATH or System PATH.\n")
-					} else {
-						fmt.Printf("    → Expected: %s\n", phpShim)
+	// 5. Check that where.exe php/composer resolve to Shepherd shims first (session PATH)
+	for _, shimCheck := range []struct {
+		name string
+		exe  string
+		shim string
+	}{
+		{"wherePhp", "php", phpShim},
+		{"whereComposer", "composer", composerShim},
+	} {
+		whereCmd := exec.Command("where.exe", shimCheck.exe)
+		whereCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
+		whereOut, err := whereCmd.Output()
+		if err == nil {
+			whereLines := strings.Split(strings.TrimSpace(string(whereOut)), "\r\n")
+			if len(whereLines) > 0 {
+				first := strings.TrimSpace(whereLines[0])
+				if strings.EqualFold(first, shimCheck.shim) {
+					if !jsonOutput {
+						fmt.Printf("  ✓ where.exe %s → Shepherd shim\n", shimCheck.exe)
 					}
+					addCheck(shimCheck.name, "ok", first, "")
+				} else {
+					// Registry says Shepherd is first, but session disagrees → profile issue
+					hint := "Check your PATH or System PATH."
+					if pathErr == nil && shimIndex != -1 && (herdIndex == -1 || shimIndex < herdIndex) {
+						hint = "Registry PATH is correct, but this session has a different order. A PowerShell profile or shell startup script is reordering PATH."
+					}
+					if !jsonOutput {
+						fmt.Printf("  ✗ where.exe %s resolves to: %s\n", shimCheck.exe, first)
+						if strings.HasSuffix(strings.ToLower(first), ".bat") {
+							fmt.Printf("    → A .bat file takes priority over Shepherd.\n")
+						} else {
+							fmt.Printf("    → Expected: %s\n", shimCheck.shim)
+						}
+						fmt.Printf("    → %s\n", hint)
+						// Check if a PowerShell profile is the culprit
+						if profileOverridesPath() {
+							fmt.Printf("    → Detected: PowerShell profile reorders PATH. Run: shp install\n")
+						}
+					}
+					addCheck(shimCheck.name, "error", first, hint)
+					issues++
 				}
-				addCheck("wherePhp", "error", first, "Check PATH or System PATH")
-				issues++
 			}
 		}
 	}
@@ -2544,8 +2569,120 @@ func cmdDoctor() {
 	if issues == 0 {
 		fmt.Println("  No issues found. Shepherd should be working correctly.")
 	} else {
-		fmt.Printf("  Found %d issue(s). Fix them and run 'shp doctor' again.\n", issues)
+		// Count errors vs warnings from the collected checks
+		errors := 0
+		warnings := 0
+		for _, c := range checks {
+			switch c.Status {
+			case "error":
+				errors++
+			case "warning":
+				warnings++
+			}
+		}
+		if errors > 0 && warnings > 0 {
+			fmt.Printf("  Found %d error(s) and %d warning(s). Fix them and run 'shp doctor' again.\n", errors, warnings)
+		} else if errors > 0 {
+			fmt.Printf("  Found %d error(s). Fix them and run 'shp doctor' again.\n", errors)
+		} else {
+			fmt.Printf("  Found %d warning(s). Fix them and run 'shp doctor' again.\n", warnings)
+		}
 	}
+}
+
+// profileOverridesPath checks whether a PowerShell profile exists that reorders
+// PATH entries (e.g. putting Herd before Shepherd). This is a common source of
+// "registry says X but session says Y" discrepancies.
+func profileOverridesPath() bool {
+	home := os.Getenv("USERPROFILE")
+	profiles := []string{
+		filepath.Join(home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1"),
+		filepath.Join(home, "Documents", "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1"),
+	}
+	for _, p := range profiles {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		content := strings.ToLower(string(data))
+		// If the profile mentions herd and manipulates $env:PATH, it's likely reordering
+		if strings.Contains(content, "herd") && strings.Contains(content, "$env:path") {
+			// Check if it already includes shepherd
+			if !strings.Contains(content, "shepherd") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// patchPowerShellProfile checks if a PowerShell profile reorders PATH (putting
+// Herd before everything) and patches it to include Shepherd first. Returns true
+// if any profile was modified.
+func patchPowerShellProfile(shepherdDir string) bool {
+	home := os.Getenv("USERPROFILE")
+	profiles := []string{
+		filepath.Join(home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1"),
+		filepath.Join(home, "Documents", "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1"),
+	}
+
+	patched := false
+	for _, p := range profiles {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		lower := strings.ToLower(content)
+
+		// Only patch if the profile manipulates PATH and mentions herd but not shepherd
+		if !strings.Contains(lower, "herd") || !strings.Contains(lower, "$env:path") {
+			continue
+		}
+		if strings.Contains(lower, "shepherd") {
+			continue
+		}
+
+		// Insert $shepherdBin variable and add it to the PATH rebuild
+		// Strategy: add the variable declaration and prepend it to the PATH assignment
+		shepherdVar := `$shepherdBin = "$env:USERPROFILE\.config\shepherd\bin"` + "\n"
+
+		// Add variable near the top (after any comment block)
+		lines := strings.Split(content, "\n")
+		insertIdx := 0
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				insertIdx = i + 1
+				continue
+			}
+			break
+		}
+		lines = append(lines[:insertIdx], append([]string{shepherdVar}, lines[insertIdx:]...)...)
+		content = strings.Join(lines, "\n")
+
+		// Add $shepherdBin to the filter (Where-Object) and to the rebuild array
+		// Filter: add $_ -ne $shepherdBin
+		content = strings.ReplaceAll(content,
+			`$_ -ne $binDir`,
+			`$_ -ne $shepherdBin -and $_ -ne $binDir`)
+		// Rebuild: add $shepherdBin before other entries
+		content = strings.ReplaceAll(content,
+			`@($binDir,`,
+			`@($shepherdBin, $binDir,`)
+		// Also handle patterns without $binDir
+		if !strings.Contains(content, "$shepherdBin, $binDir") {
+			content = strings.ReplaceAll(content,
+				`@($herdNvm,`,
+				`@($shepherdBin, $herdNvm,`)
+		}
+
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			continue
+		}
+		patched = true
+	}
+	return patched
 }
 
 // checkWindowsDevMode reads the registry to determine if Developer Mode is enabled.
@@ -2568,106 +2705,108 @@ func checkWindowsDevMode() bool {
 	return val == 1
 }
 
+// shellConfigFiles returns the list of shell configuration files to scan for alias conflicts.
+func shellConfigFiles() []string {
+	home := os.Getenv("USERPROFILE")
+	return []string{
+		// Bash
+		filepath.Join(home, ".bash_aliases"),
+		filepath.Join(home, ".bashrc"),
+		filepath.Join(home, ".bash_profile"),
+		filepath.Join(home, ".profile"),
+		// Zsh
+		filepath.Join(home, ".zshrc"),
+		filepath.Join(home, ".zprofile"),
+		filepath.Join(home, ".zshenv"),
+		filepath.Join(home, ".zsh", "aliases.zsh"),
+		// PowerShell
+		filepath.Join(home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1"),
+		filepath.Join(home, "Documents", "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1"),
+		// Git Bash (MSYS2/MinGW)
+		filepath.Join(home, ".config", "git", "bash_profile"),
+		// Cmder / ConEmu
+		filepath.Join(home, ".config", "cmder", "user_aliases.cmd"),
+		// Clink
+		filepath.Join(home, ".config", "clink", "clink_start.cmd"),
+		// Nushell
+		filepath.Join(home, "AppData", "Roaming", "nushell", "config.nu"),
+		filepath.Join(home, "AppData", "Roaming", "nushell", "env.nu"),
+	}
+}
+
+// Alias detection patterns (compiled once, reused across calls).
+var (
+	// Bash/Zsh: alias php=... or alias composer=...
+	aliasRe = regexp.MustCompile(`(?m)^\s*(?:export\s+)?alias\s+(php|composer)\s*=`)
+	// PowerShell: Set-Alias php ... / New-Alias composer ... / sal / nal
+	psAliasRe = regexp.MustCompile(`(?mi)^\s*(Set-Alias|New-Alias|sal|nal)\s+(php|composer)\b`)
+	// Guard pattern: file already checks for shp before aliasing — considered safe.
+	guardRe = regexp.MustCompile(`(?mi)command\s+-v\s+shp|which\s+shp|type\s+shp|hash\s+shp|\$\+commands\[shp\]|Get-Command\s+shp|\bshepherd[\\/]bin[\\/]shp|shp:ignore`)
+)
+
+// findUnguardedAliases returns the list of conflicting command names (php/composer)
+// found in the given file content, or nil if the file is guarded or has no aliases.
+func findUnguardedAliases(content string) []string {
+	if guardRe.MatchString(content) {
+		return nil
+	}
+
+	seen := map[string]bool{}
+	// Bash/Zsh aliases
+	for _, m := range aliasRe.FindAllStringSubmatch(content, -1) {
+		if len(m) > 1 {
+			seen[m[1]] = true
+		}
+	}
+	// PowerShell aliases
+	for _, m := range psAliasRe.FindAllStringSubmatch(content, -1) {
+		if len(m) > 2 {
+			seen[m[2]] = true
+		}
+	}
+
+	if len(seen) == 0 {
+		return nil
+	}
+
+	var cmds []string
+	for cmd := range seen {
+		cmds = append(cmds, cmd)
+	}
+	sort.Strings(cmds)
+	return cmds
+}
+
 // doctorCheckAliases scans common shell config files for aliases that override php/composer.
 func doctorCheckAliases() int {
-issues := 0
-home := os.Getenv("USERPROFILE")
+	home := os.Getenv("USERPROFILE")
+	issues := 0
 
-// Files to scan for alias definitions
-configFiles := []string{
-// Bash
-filepath.Join(home, ".bash_aliases"),
-filepath.Join(home, ".bashrc"),
-filepath.Join(home, ".bash_profile"),
-filepath.Join(home, ".profile"),
-// Zsh
-filepath.Join(home, ".zshrc"),
-filepath.Join(home, ".zprofile"),
-filepath.Join(home, ".zshenv"),
-filepath.Join(home, ".zsh", "aliases.zsh"),
-// PowerShell
-filepath.Join(home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1"),
-filepath.Join(home, "Documents", "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1"),
-// Git Bash (MSYS2/MinGW)
-filepath.Join(home, ".config", "git", "bash_profile"),
-// Cmder / ConEmu
-filepath.Join(home, ".config", "cmder", "user_aliases.cmd"),
-// Clink
-filepath.Join(home, ".config", "clink", "clink_start.cmd"),
-// Nushell
-filepath.Join(home, "AppData", "Roaming", "nushell", "config.nu"),
-filepath.Join(home, "AppData", "Roaming", "nushell", "env.nu"),
-}
+	for _, configFile := range shellConfigFiles() {
+		data, err := os.ReadFile(configFile)
+		if err != nil {
+			continue
+		}
 
-// Patterns that indicate a problematic alias
-aliasRe := regexp.MustCompile(`(?m)^\s*alias\s+(php|composer)\s*=`)
-// PowerShell-style: Set-Alias php ... or New-Alias php ...
-psAliasRe := regexp.MustCompile(`(?mi)^\s*(Set-Alias|New-Alias|sal|nal)\s+(php|composer)\b`)
-// Nushell-style: alias php = ... (same syntax as bash but included for clarity)
-nuAliasRe := regexp.MustCompile(`(?m)^\s*(?:export\s+)?alias\s+(php|composer)\s*=`)
-// Pattern for conditional aliases (guarded by Shepherd check) — these are fine
-guardRe := regexp.MustCompile(`(?mi)command\s+-v\s+shp|\$\+commands\[shp\]|Get-Command\s+shp|shp`)
+		cmds := findUnguardedAliases(string(data))
+		if len(cmds) == 0 {
+			continue
+		}
 
-for _, configFile := range configFiles {
-data, err := os.ReadFile(configFile)
-if err != nil {
-continue // File doesn't exist, skip
-}
+		relPath := strings.TrimPrefix(configFile, home+string(os.PathSeparator))
+		issues += len(cmds)
 
-content := string(data)
+		if !jsonOutput {
+			fmt.Printf("  ✗ Shell alias found: %s aliased in ~\\%s\n", strings.Join(cmds, ", "), relPath)
+			fmt.Printf("    → This overrides Shepherd. Remove the alias or guard it.\n")
+		}
+	}
 
-// Check if there's a Shepherd guard anywhere in the file
-hasGuard := guardRe.MatchString(content)
+	if issues == 0 && !jsonOutput {
+		fmt.Printf("  ✓ No conflicting shell aliases found\n")
+	}
 
-// Collect all alias matches from different patterns
-type aliasMatch struct {
-cmd string
-}
-var found []aliasMatch
-
-for _, m := range aliasRe.FindAllStringSubmatch(content, -1) {
-if len(m) > 1 {
-found = append(found, aliasMatch{cmd: m[1]})
-}
-}
-for _, m := range psAliasRe.FindAllStringSubmatch(content, -1) {
-if len(m) > 2 {
-found = append(found, aliasMatch{cmd: m[2]})
-}
-}
-for _, m := range nuAliasRe.FindAllStringSubmatch(content, -1) {
-if len(m) > 1 {
-found = append(found, aliasMatch{cmd: m[1]})
-}
-}
-
-if len(found) == 0 || hasGuard {
-continue
-}
-
-// Found unguarded alias(es)
-relPath := strings.TrimPrefix(configFile, home)
-relPath = strings.TrimPrefix(relPath, string(os.PathSeparator))
-
-seen := map[string]bool{}
-for _, f := range found {
-if seen[f.cmd] {
-continue
-}
-seen[f.cmd] = true
-if !jsonOutput {
-fmt.Printf("  ✗ Shell alias found: %s is aliased in ~\\%s\n", f.cmd, relPath)
-fmt.Printf("    → This overrides Shepherd. Remove the alias or guard it.\n")
-}
-issues++
-}
-}
-
-if issues == 0 && !jsonOutput {
-fmt.Printf("  ✓ No conflicting shell aliases found\n")
-}
-
-return issues
+	return issues
 }
 
 // cmdSelfUpdate checks for a newer release on GitHub and updates the binary.
