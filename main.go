@@ -569,6 +569,14 @@ func main() {
 
 	// Handle subcommands (only when invoked as shp)
 	if isShepherd {
+		// Passive update check: notify if a newer version is known, and refresh
+		// the cache in the background if stale. Only in interactive, non-quiet,
+		// non-json mode to avoid polluting scripts/CI output.
+		if !quiet && !jsonOutput && isInteractive() {
+			defer maybeNotifyUpdate()
+			triggerUpdateCheckIfStale()
+		}
+
 		if len(os.Args) > 1 {
 			switch os.Args[1] {
 			case "use":
@@ -2310,6 +2318,108 @@ const githubRepo = "shaffe-fr/php-shepherd"
 var allowedDownloadHosts = map[string]bool{
 	"github.com":               true,
 	"objects.githubusercontent.com": true,
+}
+
+// --- Passive update check ---
+
+// updateCheckCachePath returns the path to the update check cache file.
+func updateCheckCachePath() string {
+	return filepath.Join(shepherdDataDir(), ".update_check")
+}
+
+// updateCheckCache holds the last known latest version and when it was checked.
+type updateCheckCache struct {
+	LatestVersion string `json:"latest_version"`
+	CheckedAt     int64  `json:"checked_at"` // Unix timestamp
+}
+
+// updateCheckInterval is the minimum time between network checks (24 hours).
+const updateCheckInterval = 24 * time.Hour
+
+// readUpdateCache reads the cached update info. Returns zero-value if missing or unreadable.
+func readUpdateCache() updateCheckCache {
+	data, err := os.ReadFile(updateCheckCachePath())
+	if err != nil {
+		return updateCheckCache{}
+	}
+	var cache updateCheckCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return updateCheckCache{}
+	}
+	return cache
+}
+
+// writeUpdateCache persists the update check result to disk.
+func writeUpdateCache(cache updateCheckCache) {
+	os.MkdirAll(filepath.Dir(updateCheckCachePath()), 0755)
+	data, err := json.Marshal(cache)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(updateCheckCachePath(), data, 0644)
+}
+
+// backgroundUpdateCheck fetches the latest version from GitHub and updates the cache.
+// Runs in a goroutine — must not block the main process or print anything.
+func backgroundUpdateCheck() {
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", githubRepo)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("User-Agent", "shepherd/"+version)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return
+	}
+
+	var release githubRelease
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1024*1024)).Decode(&release); err != nil {
+		return
+	}
+
+	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	writeUpdateCache(updateCheckCache{
+		LatestVersion: latestVersion,
+		CheckedAt:     time.Now().Unix(),
+	})
+}
+
+// maybeNotifyUpdate prints a one-line update notice if a newer version is known from cache.
+// Returns true if a notice was printed (caller may want to add a blank line after output).
+func maybeNotifyUpdate() bool {
+	cache := readUpdateCache()
+	if cache.LatestVersion == "" {
+		return false
+	}
+	currentVersion := strings.TrimPrefix(version, "v")
+	if cache.LatestVersion == currentVersion {
+		return false
+	}
+	// Don't notify for dev builds
+	if currentVersion == "dev" {
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "  Update available: %s → %s (run `shp self-update`)\n", currentVersion, cache.LatestVersion)
+	return true
+}
+
+// triggerUpdateCheckIfStale starts a background update check if the cache is older than 24h.
+// This is non-blocking and has no effect on command latency.
+func triggerUpdateCheckIfStale() {
+	cache := readUpdateCache()
+	if cache.CheckedAt > 0 && time.Since(time.Unix(cache.CheckedAt, 0)) < updateCheckInterval {
+		return
+	}
+	go backgroundUpdateCheck()
 }
 
 // cmdDoctor diagnoses common issues that prevent Shepherd from working correctly.
