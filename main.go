@@ -237,6 +237,11 @@ func syncNginx(projectDir, version string) {
 	}
 }
 
+// cacertPath returns the path to Herd's CA certificate bundle.
+func cacertPath() string {
+	return filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "php", "cacert.pem")
+}
+
 // rewriteXdebugArgs rewrites xdebug DLL paths and strips -n flag.
 // Only rewrites arguments that reference the xdebug directory or contain
 // a zend_extension directive pointing to an xdebug DLL.
@@ -2035,6 +2040,18 @@ func cmdDoctor() {
 			issues++
 		}
 	}
+
+	// 8. Check CA certificate bundle
+	pemPath := cacertPath()
+	if _, err := os.Stat(pemPath); err == nil {
+		fmt.Printf("  ✓ CA certificate bundle found at %s\n", pemPath)
+	} else {
+		fmt.Printf("  ⚠ No CA certificate bundle found\n")
+		fmt.Printf("    → HTTPS requests from PHP CLI (Http::get, composer) may fail with cURL error 60\n")
+		fmt.Printf("    → Run any php command to auto-configure, or reinstall Herd\n")
+		issues++
+	}
+
 	// Summary
 	fmt.Println()
 	if issues == 0 {
