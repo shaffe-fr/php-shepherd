@@ -34,6 +34,9 @@ var verbose bool
 // quiet suppresses non-essential output.
 var quiet bool
 
+// jsonOutput controls whether commands emit machine-readable JSON instead of human text.
+var jsonOutput bool
+
 // logVerbose prints a message only when --verbose is active.
 func logVerbose(format string, args ...interface{}) {
 	if verbose {
@@ -46,6 +49,15 @@ func logInfo(format string, args ...interface{}) {
 	if !quiet {
 		fmt.Printf(format, args...)
 	}
+}
+
+// nilIfEmpty returns nil if s is empty, otherwise returns s.
+// Used for JSON output so absent values serialize as null instead of "".
+func nilIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // httpClient is the shared HTTP client with a sensible timeout.
@@ -461,7 +473,7 @@ func rewriteXdebugArgs(args []string, version string) []string {
 }
 
 func main() {
-	// Parse global flags (--verbose, --quiet) before anything else.
+	// Parse global flags (--verbose, --quiet, --json) before anything else.
 	// These are stripped from os.Args so subcommands don't see them.
 	var cleanedArgs []string
 	for _, arg := range os.Args {
@@ -470,6 +482,8 @@ func main() {
 			verbose = true
 		case "--quiet", "-q":
 			quiet = true
+		case "--json":
+			jsonOutput = true
 		default:
 			cleanedArgs = append(cleanedArgs, arg)
 		}
@@ -513,7 +527,13 @@ func main() {
 				cmdList()
 				return
 			case "version", "--version", "-v":
-				fmt.Printf("shp %s\n", version)
+				if jsonOutput {
+					enc := json.NewEncoder(os.Stdout)
+					enc.SetIndent("", "  ")
+					_ = enc.Encode(map[string]string{"version": version})
+				} else {
+					fmt.Printf("shp %s\n", version)
+				}
 				return
 			}
 		}
@@ -534,6 +554,7 @@ func main() {
 		fmt.Println("Global flags:")
 		fmt.Println("  --verbose   Show extra diagnostic output")
 		fmt.Println("  --quiet     Suppress non-essential output")
+		fmt.Println("  --json      Output machine-readable JSON (for scripts and LLMs)")
 		fmt.Println()
 		fmt.Println("When invoked as php.exe or composer.exe, acts as a transparent PHP version switcher.")
 		return
@@ -684,8 +705,13 @@ func cmdList() {
 		currentVersion = findPHPVersion(cwd)
 	}
 
-	fmt.Println("Available PHP versions:")
-	fmt.Println()
+	// Collect versions
+	type phpVer struct {
+		Version string `json:"version"`
+		Active  bool   `json:"active"`
+		Path    string `json:"path"`
+	}
+	var versions []phpVer
 	for _, m := range matches {
 		dirName := filepath.Base(m)
 		v := phpDirVersion(m)
@@ -700,10 +726,27 @@ func cmdList() {
 			continue
 		}
 		ver := dm[1] + "." + dm[2]
-		if ver == currentVersion {
-			fmt.Printf("  → %s (active)\n", ver)
+		versions = append(versions, phpVer{
+			Version: ver,
+			Active:  ver == currentVersion,
+			Path:    m,
+		})
+	}
+
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(versions)
+		return
+	}
+
+	fmt.Println("Available PHP versions:")
+	fmt.Println()
+	for _, v := range versions {
+		if v.Active {
+			fmt.Printf("  → %s (active)\n", v.Version)
 		} else {
-			fmt.Printf("    %s\n", ver)
+			fmt.Printf("    %s\n", v.Version)
 		}
 	}
 }
@@ -1012,14 +1055,6 @@ func cmdUninstall() {
 
 // cmdStatus shows the current configuration status.
 func cmdStatus() {
-	// Check for --json flag
-	jsonOutput := false
-	for _, arg := range os.Args[2:] {
-		if arg == "--json" {
-			jsonOutput = true
-		}
-	}
-
 	dir := shimDir()
 	phpShim := filepath.Join(dir, "php.exe")
 	composerShim := filepath.Join(dir, "composer.exe")
@@ -1104,15 +1139,15 @@ func cmdStatus() {
 	// JSON output
 	if jsonOutput {
 		status := map[string]interface{}{
-			"phpLocal":          localVersion,
-			"phpGlobal":         globalVersion,
-			"xdebugEnabled":     xdebugEnabled,
-			"xdebugMode":        xdebugMode,
-			"phpShimInstalled":  phpShimInstalled,
+			"phpLocal":              nilIfEmpty(localVersion),
+			"phpGlobal":            nilIfEmpty(globalVersion),
+			"xdebugEnabled":        xdebugEnabled,
+			"xdebugMode":           nilIfEmpty(xdebugMode),
+			"phpShimInstalled":     phpShimInstalled,
 			"composerShimInstalled": composerShimInstalled,
-			"shimDir":           dir,
-			"pathConfigured":    pathOK,
-			"shepherdVersion":   version,
+			"shimDir":              dir,
+			"pathConfigured":       pathOK,
+			"shepherdVersion":      version,
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -1455,6 +1490,19 @@ func xdebugStatus(lines []string, version string) {
 			}
 		}
 	}
+
+	if jsonOutput {
+		status := map[string]interface{}{
+			"phpVersion": version,
+			"enabled":    enabled,
+			"mode":       mode,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(status)
+		return
+	}
+
 	if enabled {
 		if mode == "" {
 			mode = "debug (default)"
@@ -2092,24 +2140,47 @@ var allowedDownloadHosts = map[string]bool{
 
 // cmdDoctor diagnoses common issues that prevent Shepherd from working correctly.
 func cmdDoctor() {
-	fmt.Println("shp doctor")
-	fmt.Println()
+	type checkResult struct {
+		Name   string `json:"name"`
+		Status string `json:"status"` // "ok", "warning", "error"
+		Detail string `json:"detail,omitempty"`
+		Fix    string `json:"fix,omitempty"`
+	}
+	var checks []checkResult
+
+	addCheck := func(name, status, detail, fix string) {
+		checks = append(checks, checkResult{Name: name, Status: status, Detail: detail, Fix: fix})
+	}
+
+	if !jsonOutput {
+		fmt.Println("shp doctor")
+		fmt.Println()
+	}
 
 	issues := 0
 
 	// 0. Check Herd is installed
 	if !checkHerd() {
-		fmt.Printf("  ✗ Laravel Herd is not installed (expected %s)\n", herdHome())
-		fmt.Printf("    → Install from https://herd.laravel.com\n")
+		if !jsonOutput {
+			fmt.Printf("  ✗ Laravel Herd is not installed (expected %s)\n", herdHome())
+			fmt.Printf("    → Install from https://herd.laravel.com\n")
+		}
+		addCheck("herd", "error", "not installed", "Install from https://herd.laravel.com")
 		issues++
 	} else {
-		fmt.Printf("  ✓ Laravel Herd found\n")
+		if !jsonOutput {
+			fmt.Printf("  ✓ Laravel Herd found\n")
+		}
+		addCheck("herd", "ok", "", "")
 	}
 
 	// 1. Check .phpversion in cwd
 	cwd, err := os.Getwd()
 	if err != nil {
-		fmt.Printf("  ✗ Cannot get working directory: %v\n", err)
+		if !jsonOutput {
+			fmt.Printf("  ✗ Cannot get working directory: %v\n", err)
+		}
+		addCheck("phpversion", "error", err.Error(), "")
 		issues++
 	} else {
 		ver := findPHPVersion(cwd)
@@ -2117,14 +2188,23 @@ func cmdDoctor() {
 			// Validate that the PHP binary exists
 			_, resolveErr := resolveFromVersion(ver)
 			if resolveErr != nil {
-				fmt.Printf("  ✗ .phpversion requests PHP %s, but it is not installed\n", ver)
-				fmt.Printf("    → Install PHP %s via Herd, or change .phpversion\n", ver)
+				if !jsonOutput {
+					fmt.Printf("  ✗ .phpversion requests PHP %s, but it is not installed\n", ver)
+					fmt.Printf("    → Install PHP %s via Herd, or change .phpversion\n", ver)
+				}
+				addCheck("phpversion", "error", "PHP "+ver+" not installed", "Install PHP "+ver+" via Herd, or change .phpversion")
 				issues++
 			} else {
-				fmt.Printf("  ✓ .phpversion: %s (installed)\n", ver)
+				if !jsonOutput {
+					fmt.Printf("  ✓ .phpversion: %s (installed)\n", ver)
+				}
+				addCheck("phpversion", "ok", ver, "")
 			}
 		} else {
-			fmt.Printf("  • No .phpversion found (will use Herd global)\n")
+			if !jsonOutput {
+				fmt.Printf("  • No .phpversion found (will use Herd global)\n")
+			}
+			addCheck("phpversion", "ok", "none (using Herd global)", "")
 		}
 	}
 
@@ -2134,25 +2214,40 @@ func cmdDoctor() {
 	composerShim := filepath.Join(dir, "composer.exe")
 
 	if _, err := os.Stat(phpShim); err != nil {
-		fmt.Printf("  ✗ php.exe shim not found at %s\n", phpShim)
-		fmt.Printf("    → Run: shp install\n")
+		if !jsonOutput {
+			fmt.Printf("  ✗ php.exe shim not found at %s\n", phpShim)
+			fmt.Printf("    → Run: shp install\n")
+		}
+		addCheck("phpShim", "error", "not found", "shp install")
 		issues++
 	} else {
-		fmt.Printf("  ✓ php.exe shim installed\n")
+		if !jsonOutput {
+			fmt.Printf("  ✓ php.exe shim installed\n")
+		}
+		addCheck("phpShim", "ok", "", "")
 	}
 
 	if _, err := os.Stat(composerShim); err != nil {
-		fmt.Printf("  ✗ composer.exe shim not found at %s\n", composerShim)
-		fmt.Printf("    → Run: shp install\n")
+		if !jsonOutput {
+			fmt.Printf("  ✗ composer.exe shim not found at %s\n", composerShim)
+			fmt.Printf("    → Run: shp install\n")
+		}
+		addCheck("composerShim", "error", "not found", "shp install")
 		issues++
 	} else {
-		fmt.Printf("  ✓ composer.exe shim installed\n")
+		if !jsonOutput {
+			fmt.Printf("  ✓ composer.exe shim installed\n")
+		}
+		addCheck("composerShim", "ok", "", "")
 	}
 
 	// 3. Check PATH order (User PATH from registry)
 	userPath, _, pathErr := getUserPath()
 	if pathErr != nil {
-		fmt.Printf("  ✗ Cannot read User PATH: %v\n", pathErr)
+		if !jsonOutput {
+			fmt.Printf("  ✗ Cannot read User PATH: %v\n", pathErr)
+		}
+		addCheck("pathOrder", "error", pathErr.Error(), "")
 		issues++
 	} else {
 		entries := strings.Split(userPath, ";")
@@ -2171,20 +2266,36 @@ func cmdDoctor() {
 		}
 
 		if shimIndex == -1 {
-			fmt.Printf("  ✗ Shepherd shim directory is NOT in User PATH\n")
-			fmt.Printf("    → Run: shp install\n")
+			if !jsonOutput {
+				fmt.Printf("  ✗ Shepherd shim directory is NOT in User PATH\n")
+				fmt.Printf("    → Run: shp install\n")
+			}
+			addCheck("pathOrder", "error", "shim directory not in PATH", "shp install")
 			issues++
 		} else if herdIndex != -1 && shimIndex > herdIndex {
-			fmt.Printf("  ✗ Shepherd is AFTER Herd in PATH (position %d vs %d)\n", shimIndex+1, herdIndex+1)
-			fmt.Printf("    → Run: shp install\n")
+			if !jsonOutput {
+				fmt.Printf("  ✗ Shepherd is AFTER Herd in PATH (position %d vs %d)\n", shimIndex+1, herdIndex+1)
+				fmt.Printf("    → Run: shp install\n")
+			}
+			addCheck("pathOrder", "error", "Shepherd is after Herd in PATH", "shp install")
 			issues++
 		} else {
-			fmt.Printf("  ✓ PATH order: Shepherd is before Herd\n")
+			if !jsonOutput {
+				fmt.Printf("  ✓ PATH order: Shepherd is before Herd\n")
+			}
+			addCheck("pathOrder", "ok", "", "")
 		}
 	}
 
 	// 4. Check for shell aliases that override Shepherd
 	aliasIssues := doctorCheckAliases()
+	if jsonOutput {
+		if aliasIssues > 0 {
+			addCheck("shellAliases", "error", fmt.Sprintf("%d conflicting alias(es)", aliasIssues), "Remove aliases or guard them with shp check")
+		} else {
+			addCheck("shellAliases", "ok", "", "")
+		}
+	}
 	issues += aliasIssues
 
 	// 5. Check that where.exe php resolves to Shepherd shim first
@@ -2196,14 +2307,20 @@ func cmdDoctor() {
 		if len(whereLines) > 0 {
 			first := strings.TrimSpace(whereLines[0])
 			if strings.EqualFold(first, phpShim) {
-				fmt.Printf("  ✓ where.exe php → Shepherd shim (first result)\n")
-			} else {
-				fmt.Printf("  ✗ where.exe php resolves to: %s\n", first)
-				if strings.HasSuffix(strings.ToLower(first), ".bat") {
-					fmt.Printf("    → A .bat file takes priority over Shepherd. Check your PATH or System PATH.\n")
-				} else {
-					fmt.Printf("    → Expected: %s\n", phpShim)
+				if !jsonOutput {
+					fmt.Printf("  ✓ where.exe php → Shepherd shim (first result)\n")
 				}
+				addCheck("wherePhp", "ok", first, "")
+			} else {
+				if !jsonOutput {
+					fmt.Printf("  ✗ where.exe php resolves to: %s\n", first)
+					if strings.HasSuffix(strings.ToLower(first), ".bat") {
+						fmt.Printf("    → A .bat file takes priority over Shepherd. Check your PATH or System PATH.\n")
+					} else {
+						fmt.Printf("    → Expected: %s\n", phpShim)
+					}
+				}
+				addCheck("wherePhp", "error", first, "Check PATH or System PATH")
 				issues++
 			}
 		}
@@ -2212,11 +2329,17 @@ func cmdDoctor() {
 	// 6. Check Windows Developer Mode (needed for symlinks without admin)
 	devModeEnabled := checkWindowsDevMode()
 	if devModeEnabled {
-		fmt.Printf("  ✓ Windows Developer Mode is enabled\n")
+		if !jsonOutput {
+			fmt.Printf("  ✓ Windows Developer Mode is enabled\n")
+		}
+		addCheck("devMode", "ok", "", "")
 	} else {
-		fmt.Printf("  ⚠ Windows Developer Mode is disabled\n")
-		fmt.Printf("    → Commands like 'php artisan storage:link' will fail without Admin privileges\n")
-		fmt.Printf("    → Enable it: Settings → System → For developers → Developer Mode\n")
+		if !jsonOutput {
+			fmt.Printf("  ⚠ Windows Developer Mode is disabled\n")
+			fmt.Printf("    → Commands like 'php artisan storage:link' will fail without Admin privileges\n")
+			fmt.Printf("    → Enable it: Settings → System → For developers → Developer Mode\n")
+		}
+		addCheck("devMode", "warning", "disabled", "Settings → System → For developers → Developer Mode")
 		issues++
 	}
 
@@ -2231,11 +2354,17 @@ func cmdDoctor() {
 			}
 		}
 		if composerInPath {
-			fmt.Printf("  ✓ Composer global bin is in PATH\n")
+			if !jsonOutput {
+				fmt.Printf("  ✓ Composer global bin is in PATH\n")
+			}
+			addCheck("composerGlobalBin", "ok", "", "")
 		} else {
-			fmt.Printf("  ⚠ %s is not in PATH\n", composerGlobalBin)
-			fmt.Printf("    → Global Composer tools (laravel, phpstan, etc.) won't be found\n")
-			fmt.Printf("    → Add it to your User PATH or run: setx PATH \"%%PATH%%;%s\"\n", composerGlobalBin)
+			if !jsonOutput {
+				fmt.Printf("  ⚠ %s is not in PATH\n", composerGlobalBin)
+				fmt.Printf("    → Global Composer tools (laravel, phpstan, etc.) won't be found\n")
+				fmt.Printf("    → Add it to your User PATH or run: setx PATH \"%%PATH%%;%s\"\n", composerGlobalBin)
+			}
+			addCheck("composerGlobalBin", "warning", "not in PATH", "Add "+composerGlobalBin+" to User PATH")
 			issues++
 		}
 	}
@@ -2243,12 +2372,31 @@ func cmdDoctor() {
 	// 8. Check CA certificate bundle
 	pemPath := cacertPath()
 	if _, err := os.Stat(pemPath); err == nil {
-		fmt.Printf("  ✓ CA certificate bundle found at %s\n", pemPath)
+		if !jsonOutput {
+			fmt.Printf("  ✓ CA certificate bundle found at %s\n", pemPath)
+		}
+		addCheck("cacert", "ok", pemPath, "")
 	} else {
-		fmt.Printf("  ⚠ No CA certificate bundle found\n")
-		fmt.Printf("    → HTTPS requests from PHP CLI (Http::get, composer) may fail with cURL error 60\n")
-		fmt.Printf("    → Run any php command to auto-configure, or reinstall Herd\n")
+		if !jsonOutput {
+			fmt.Printf("  ⚠ No CA certificate bundle found\n")
+			fmt.Printf("    → HTTPS requests from PHP CLI (Http::get, composer) may fail with cURL error 60\n")
+			fmt.Printf("    → Run any php command to auto-configure, or reinstall Herd\n")
+		}
+		addCheck("cacert", "warning", "not found", "Run any php command to auto-configure, or reinstall Herd")
 		issues++
+	}
+
+	// Output
+	if jsonOutput {
+		result := map[string]interface{}{
+			"healthy": issues == 0,
+			"issues":  issues,
+			"checks":  checks,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return
 	}
 
 	// Summary
@@ -2367,13 +2515,15 @@ if seen[f.cmd] {
 continue
 }
 seen[f.cmd] = true
+if !jsonOutput {
 fmt.Printf("  ✗ Shell alias found: %s is aliased in ~\\%s\n", f.cmd, relPath)
 fmt.Printf("    → This overrides Shepherd. Remove the alias or guard it.\n")
+}
 issues++
 }
 }
 
-if issues == 0 {
+if issues == 0 && !jsonOutput {
 fmt.Printf("  ✓ No conflicting shell aliases found\n")
 }
 

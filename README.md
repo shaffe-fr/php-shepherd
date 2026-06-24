@@ -146,32 +146,40 @@ When the version in `.phpversion` differs from what's configured in Herd's nginx
 
 ### Global flags
 
-| Flag        | Description                    |
-|-------------|--------------------------------|
-| `--verbose` | Show extra diagnostic output   |
-| `--quiet`   | Suppress non-essential output  |
+| Flag        | Description                                       |
+|-------------|---------------------------------------------------|
+| `--verbose` | Show extra diagnostic output                      |
+| `--quiet`   | Suppress non-essential output                     |
+| `--json`    | Output machine-readable JSON (for scripts & LLMs) |
 
 These can be placed anywhere in the command:
 
 ```powershell
 shp status --verbose
 shp ext add redis --quiet
+shp doctor --json
 ```
 
 ### Machine-readable output
 
-`shp status --json` outputs a JSON object for scripting and editor integrations:
+`--json` is a global flag — any command that produces output will emit JSON instead:
 
 ```powershell
 shp status --json
+shp list --json
+shp xdebug --json
+shp doctor --json
+shp version --json
 ```
+
+Example (`shp status --json`):
 
 ```json
 {
   "phpLocal": "8.4",
   "phpGlobal": "8.5",
   "xdebugEnabled": false,
-  "xdebugMode": "",
+  "xdebugMode": null,
   "phpShimInstalled": true,
   "composerShimInstalled": true,
   "shimDir": "C:\\Users\\you\\.config\\shepherd\\bin",
