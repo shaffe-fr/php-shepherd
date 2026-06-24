@@ -137,7 +137,7 @@ When the version in `.phpversion` differs from what's configured in Herd's nginx
 | `shp list`           | List available PHP versions (alias: `ls`)                               |
 | `shp status`         | Show current PHP version and configuration                              |
 | `shp xdebug <cmd>`   | Manage xdebug for the resolved PHP version                              |
-| `shp ext add <name>` | Add a PHP extension from PECL                                           |
+| `shp ext add <name>` | Download, install, and configure a PHP extension (DLL + deps + php.ini) |
 | `shp install`        | Install the `php`/`composer` shims and prepend them to the User PATH    |
 | `shp uninstall`      | Remove the shims and clean up the PATH                                  |
 | `shp doctor`         | Diagnose common issues with Shepherd setup                              |
@@ -261,7 +261,7 @@ Xdebug adds overhead, so toggling it off when you don't need it keeps things fas
 
 ## Extension management
 
-Install PHP extensions that aren't bundled with Herd for Windows:
+Install and configure PHP extensions that aren't bundled with Herd for Windows — no manual DLL wrangling required:
 
 ```powershell
 shp ext add imagick
@@ -272,7 +272,14 @@ shp ext add igbinary --php=all   # install for every PHP version at once
 
 Supported extensions: `igbinary`, `imagick`, `memcached`, `pdo_sqlsrv`, `redis`, `sqlsrv`.
 
-The command handles the entire installation — downloading the extension DLL, placing support libraries (like ImageMagick's DLLs) next to `php.exe`, and registering the extension in `php.ini`.
+The command handles the full lifecycle:
+
+1. Detects the latest stable version from PECL (or uses `--ext-version`)
+2. Downloads the pre-built Windows DLL from the official PHP Windows mirror
+3. Installs system-level dependencies via winget when needed (e.g. ODBC Driver for sqlsrv)
+4. Places support libraries (like ImageMagick's DLLs) next to `php.exe`
+5. Registers the extension in `php.ini` (`extension=` or `zend_extension=`)
+6. Verifies the extension loads correctly via `php -m`
 
 ### Options
 
