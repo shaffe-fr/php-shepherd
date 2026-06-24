@@ -606,14 +606,54 @@ func main() {
 			return
 		}
 
+		if jsonOutput {
+			type cmdInfo struct {
+				Name        string `json:"name"`
+				Aliases     []string `json:"aliases,omitempty"`
+				Description string `json:"description"`
+			}
+			type flagInfo struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+			}
+			help := struct {
+				Version  string     `json:"version"`
+				Commands []cmdInfo  `json:"commands"`
+				Flags    []flagInfo `json:"flags"`
+			}{
+				Version: version,
+				Commands: []cmdInfo{
+					{Name: "use", Description: "Set the PHP version for the current project (.phpversion)"},
+					{Name: "list", Aliases: []string{"ls"}, Description: "List available PHP versions"},
+					{Name: "status", Description: "Show current PHP version and configuration"},
+					{Name: "xdebug", Description: "Manage xdebug for the current PHP version"},
+					{Name: "ext", Description: "Download, install, and configure a PHP extension"},
+					{Name: "install", Description: "Install php.exe and composer.exe shims and configure PATH"},
+					{Name: "uninstall", Description: "Remove shims and restore PATH"},
+					{Name: "doctor", Description: "Diagnose common issues with Shepherd setup"},
+					{Name: "self-update", Description: "Update Shepherd to the latest version"},
+					{Name: "version", Description: "Show current Shepherd version"},
+				},
+				Flags: []flagInfo{
+					{Name: "--verbose", Description: "Show extra diagnostic output"},
+					{Name: "--quiet", Description: "Suppress non-essential output"},
+					{Name: "--json", Description: "Output machine-readable JSON (for scripts and LLMs)"},
+				},
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(help)
+			return
+		}
+
 		fmt.Println("Shepherd - Per-project PHP on Windows, done right.")
 		fmt.Println()
 		fmt.Println("Commands:")
 		fmt.Println("  use         Set the PHP version for the current project (.phpversion)")
-		fmt.Println("  list        List available PHP versions")
+		fmt.Println("  list, ls    List available PHP versions")
 		fmt.Println("  status      Show current PHP version and configuration")
 		fmt.Println("  xdebug      Manage xdebug for the current PHP version")
-		fmt.Println("  ext         Add PHP extensions from PECL")
+		fmt.Println("  ext         Download, install, and configure a PHP extension")
 		fmt.Println("  install     Install php.exe and composer.exe shims and configure PATH")
 		fmt.Println("  uninstall   Remove shims and restore PATH")
 		fmt.Println("  doctor      Diagnose common issues with Shepherd setup")
