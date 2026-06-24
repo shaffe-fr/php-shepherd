@@ -44,7 +44,7 @@ Shepherd will detect it's not installed yet and offer to set everything up:
 Shepherd is not installed yet. Install now? [Y/n]
 ```
 
-That's it. The installer copies the shims (`php.exe`, `composer.exe`, `shp.exe`) into `%USERPROFILE%\.config\shepherd\bin`, prepends that directory to your User PATH, and broadcasts the change to running apps.
+That's it. The installer copies the shims (`php.exe`, `composer.exe`, `shp.exe`) into `%USERPROFILE%\.config\shepherd\bin`, prepends that directory to your User PATH, and broadcasts the change to running apps. If it detects a PowerShell profile that reorders PATH (putting Herd before Shepherd), it also patches the profile to source a Shepherd snippet that keeps the shim directory first. This is fully reversed by `shp uninstall`.
 
 > **Non-interactive environments (CI, piped input):** When stdin is not a terminal, Shepherd skips the install prompt and displays the help text instead. You can also pass `--no-interactive` explicitly. Use `shp install` in scripts to install without prompting.
 
@@ -405,6 +405,7 @@ Run `shp doctor` for an automated diagnosis. It checks:
 | Composer bin    | `%APPDATA%\Composer\vendor\bin` is in PATH                         |
 | CA certificate  | Herd's `cacert.pem` exists (needed for HTTPS from PHP CLI)         |
 | nginx config    | Runs `nginx -t` to validate all site configs (including Reverb)    |
+| PHP-CGI ports   | Each isolated PHP version has its CGI process listening            |
 
 Common issues:
 
