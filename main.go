@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -362,7 +363,8 @@ func updateNginxConf(confPath, version string) bool {
 	}
 
 	// Repair empty fastcgi_pass directives (left behind by previous buggy rewrites)
-	reEmptyPass := regexp.MustCompile(`(?m)(fastcgi_pass)\s*;`)
+	// Matches: fastcgi_pass ; OR fastcgi_pass ""; OR fastcgi_pass "";
+	reEmptyPass := regexp.MustCompile(`(?m)(fastcgi_pass)\s*"?"?\s*;`)
 	if reEmptyPass.MatchString(content) {
 		content = reEmptyPass.ReplaceAllLiteralString(content, "fastcgi_pass "+expectedSock+";")
 		modified = true
@@ -408,6 +410,7 @@ func syncNginx(projectDir, version string) {
 			nginxSyncTouch(domain)
 			needNginxRestart = true
 		}
+
 	}
 
 	// Single nginx restart for all modified confs
@@ -424,13 +427,8 @@ func syncNginx(projectDir, version string) {
 	cmd := exec.Command(bootstrap, herdPhar, "restart", "nginx")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	// CREATE_NO_WINDOW | DETACHED_PROCESS: the child process runs independently
-	// and won't be affected if the parent exits immediately after.
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000 | 0x00000008}
-	if err := cmd.Start(); err == nil {
-		// Release the process handle so it can outlive us without leaking handles.
-		_ = cmd.Process.Release()
-	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
+	_ = cmd.Run()
 }
 
 // cacertPath returns the path to Herd's CA certificate bundle.
@@ -597,6 +595,9 @@ func main() {
 			case "ext":
 				cmdExt()
 				return
+			case "reverb":
+				cmdReverb()
+				return
 			case "self-update":
 				cmdSelfUpdate()
 				return
@@ -638,9 +639,9 @@ func main() {
 
 		if jsonOutput {
 			type cmdInfo struct {
-				Name        string `json:"name"`
+				Name        string   `json:"name"`
 				Aliases     []string `json:"aliases,omitempty"`
-				Description string `json:"description"`
+				Description string   `json:"description"`
 			}
 			type flagInfo struct {
 				Name        string `json:"name"`
@@ -658,6 +659,7 @@ func main() {
 					{Name: "status", Description: "Show current PHP version and configuration"},
 					{Name: "xdebug", Description: "Manage xdebug for the current PHP version"},
 					{Name: "ext", Description: "Download, install, and configure a PHP extension"},
+					{Name: "reverb", Description: "Show Reverb status and .env configuration"},
 					{Name: "install", Description: "Install php.exe and composer.exe shims and configure PATH"},
 					{Name: "uninstall", Description: "Remove shims and restore PATH"},
 					{Name: "doctor", Description: "Diagnose common issues with Shepherd setup"},
@@ -685,6 +687,7 @@ func main() {
 		fmt.Println("  status      Show current PHP version and configuration")
 		fmt.Println("  xdebug      Manage xdebug for the current PHP version")
 		fmt.Println("  ext         Download, install, and configure a PHP extension")
+		fmt.Println("  reverb      Show Reverb status and .env configuration")
 		fmt.Println("  install     Install php.exe and composer.exe shims and configure PATH")
 		fmt.Println("  uninstall   Remove shims and restore PATH")
 		fmt.Println("  doctor      Diagnose common issues with Shepherd setup")
@@ -1104,9 +1107,9 @@ func cmdInstall() {
 	}
 
 	type shimResult struct {
-		Name    string `json:"name"`
-		Path    string `json:"path"`
-		Status  string `json:"status"` // "installed", "up_to_date"
+		Name   string `json:"name"`
+		Path   string `json:"path"`
+		Status string `json:"status"` // "installed", "up_to_date"
 	}
 	var shims []shimResult
 
@@ -1315,14 +1318,14 @@ func cmdStatus() {
 	if jsonOutput {
 		status := map[string]interface{}{
 			"phpLocal":              nilIfEmpty(localVersion),
-			"phpGlobal":            nilIfEmpty(globalVersion),
-			"xdebugEnabled":        xdebugEnabled,
-			"xdebugMode":           nilIfEmpty(xdebugMode),
-			"phpShimInstalled":     phpShimInstalled,
+			"phpGlobal":             nilIfEmpty(globalVersion),
+			"xdebugEnabled":         xdebugEnabled,
+			"xdebugMode":            nilIfEmpty(xdebugMode),
+			"phpShimInstalled":      phpShimInstalled,
 			"composerShimInstalled": composerShimInstalled,
-			"shimDir":              dir,
-			"pathConfigured":       pathOK,
-			"shepherdVersion":      version,
+			"shimDir":               dir,
+			"pathConfigured":        pathOK,
+			"shepherdVersion":       version,
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -2316,7 +2319,7 @@ const githubRepo = "shaffe-fr/php-shepherd"
 
 // allowedDownloadHosts lists the GitHub domains from which self-update assets may be downloaded.
 var allowedDownloadHosts = map[string]bool{
-	"github.com":               true,
+	"github.com":                    true,
 	"objects.githubusercontent.com": true,
 }
 
@@ -2420,6 +2423,213 @@ func triggerUpdateCheckIfStale() {
 		return
 	}
 	go backgroundUpdateCheck()
+}
+
+// herdCertsDir returns the Herd certificates directory.
+func herdCertsDir() string {
+	return filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "valet", "Certificates")
+}
+
+// herdTLD reads the TLD from Herd's config.json (defaults to "test").
+func herdTLD() string {
+	data, err := os.ReadFile(herdConfigPath())
+	if err != nil {
+		return "test"
+	}
+	var config struct {
+		TLD string `json:"tld"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil || config.TLD == "" {
+		return "test"
+	}
+	return config.TLD
+}
+
+// findProjectDomain resolves the domain name for the current project directory
+// by scanning Herd's parked paths for a matching entry.
+func findProjectDomain(projectDir string) string {
+	physicalDir := strings.ToLower(resolvePhysicalPath(projectDir))
+
+	for _, dir := range herdParkedPaths() {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() && entry.Type()&os.ModeSymlink == 0 {
+				continue
+			}
+			entryPath := filepath.Join(dir, entry.Name())
+			resolved := strings.ToLower(resolvePhysicalPath(entryPath))
+			if resolved == physicalDir {
+				return entry.Name()
+			}
+		}
+	}
+	return ""
+}
+
+// cmdReverb shows Reverb status and .env configuration for the current project.
+//
+// Usage:
+//
+//	shp reverb              Show current Reverb status
+//	shp reverb status       Same as above
+//	shp reverb env          Print the recommended .env variables
+func cmdReverb() {
+	requireHerd()
+
+	// Help
+	if len(os.Args) > 2 && (os.Args[2] == "-h" || os.Args[2] == "--help") {
+		fmt.Println("Usage: shp reverb [command]")
+		fmt.Println()
+		fmt.Println("Show Reverb status and configuration for the current project.")
+		fmt.Println("Reverb serves WebSockets directly over TLS using Herd's certificates —")
+		fmt.Println("no nginx reverse proxy needed.")
+		fmt.Println()
+		fmt.Println("Commands:")
+		fmt.Println("  status   Show current Reverb connectivity (default)")
+		fmt.Println("  env      Print the recommended .env variables")
+		fmt.Println()
+		fmt.Println("Flags:")
+		fmt.Println("  --port=PORT   Reverb listen port (default: 8443)")
+		return
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Resolve project domain
+	domain := findProjectDomain(cwd)
+	if domain == "" {
+		fmt.Fprintf(os.Stderr, "Error: could not find this project in Herd's parked paths.\n")
+		fmt.Fprintf(os.Stderr, "Make sure the project is in a directory registered with Herd.\n")
+		os.Exit(1)
+	}
+
+	tld := herdTLD()
+	fqdn := domain + "." + tld
+
+	// Parse --port flag
+	port := 8443
+	for _, arg := range os.Args[2:] {
+		if strings.HasPrefix(arg, "--port=") {
+			v, perr := strconv.Atoi(strings.TrimPrefix(arg, "--port="))
+			if perr != nil || v < 1 || v > 65535 {
+				fmt.Fprintf(os.Stderr, "Error: invalid port value\n")
+				os.Exit(1)
+			}
+			port = v
+		}
+	}
+
+	subcmd := "status"
+	if len(os.Args) > 2 && !strings.HasPrefix(os.Args[2], "-") {
+		subcmd = strings.ToLower(os.Args[2])
+	}
+
+	switch subcmd {
+	case "status":
+		cmdReverbStatus(fqdn, port)
+	case "env":
+		cmdReverbEnv(fqdn, port)
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown reverb command: %s\n", os.Args[2])
+		fmt.Fprintf(os.Stderr, "Run `shp reverb --help` for usage.\n")
+		os.Exit(1)
+	}
+}
+
+// cmdReverbStatus shows whether Reverb is reachable on its expected port.
+func cmdReverbStatus(fqdn string, port int) {
+	portStr := strconv.Itoa(port)
+	listening := checkPort(fqdn, portStr)
+
+	// Check if certs exist (needed for Reverb's auto-TLS)
+	certFile := filepath.Join(herdCertsDir(), fqdn+".crt")
+	hasCert := false
+	if _, err := os.Stat(certFile); err == nil {
+		hasCert = true
+	}
+
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]interface{}{
+			"domain":    fqdn,
+			"port":      port,
+			"listening": listening,
+			"hasCert":   hasCert,
+			"startCmd":  fmt.Sprintf("php artisan reverb:start --host=0.0.0.0 --port=%d", port),
+		})
+		return
+	}
+
+	fmt.Printf("  Reverb: %s:%d\n", fqdn, port)
+	fmt.Println()
+
+	if !hasCert {
+		domain := strings.TrimSuffix(fqdn, "."+herdTLD())
+		fmt.Printf("  ✗ No SSL certificate found for %s\n", fqdn)
+		fmt.Printf("    → Run: herd secure %s\n", domain)
+		fmt.Printf("    → Reverb needs certs to serve WSS (auto-detected from Herd)\n")
+		return
+	}
+	fmt.Printf("  ✓ SSL certificate found (Reverb will auto-detect it)\n")
+
+	if listening {
+		fmt.Printf("  ✓ Listening on wss://%s:%d\n", fqdn, port)
+	} else {
+		fmt.Printf("  ✗ Not listening on port %d\n", port)
+		fmt.Printf("    → Start Reverb: php artisan reverb:start --host=0.0.0.0 --port=%d\n", port)
+	}
+}
+
+// cmdReverbEnv prints the recommended .env variables for Reverb.
+func cmdReverbEnv(fqdn string, port int) {
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]interface{}{
+			"REVERB_SERVER_HOST": "0.0.0.0",
+			"REVERB_SERVER_PORT": port,
+			"REVERB_HOST":        fqdn,
+			"REVERB_PORT":        port,
+			"REVERB_SCHEME":      "https",
+			"VITE_REVERB_HOST":   fqdn,
+			"VITE_REVERB_PORT":   port,
+			"VITE_REVERB_SCHEME": "https",
+		})
+		return
+	}
+
+	fmt.Println("  Add this to your .env:")
+	fmt.Println()
+	fmt.Printf("    REVERB_SERVER_HOST=0.0.0.0\n")
+	fmt.Printf("    REVERB_SERVER_PORT=%d\n", port)
+	fmt.Printf("    REVERB_HOST=%s\n", fqdn)
+	fmt.Printf("    REVERB_PORT=%d\n", port)
+	fmt.Printf("    REVERB_SCHEME=https\n")
+	fmt.Println()
+	fmt.Printf("    VITE_REVERB_HOST=%s\n", fqdn)
+	fmt.Printf("    VITE_REVERB_PORT=%d\n", port)
+	fmt.Printf("    VITE_REVERB_SCHEME=https\n")
+}
+
+// checkPort attempts a TCP connection to host:port to see if something is listening.
+func checkPort(host, port string) bool {
+	if port == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 1*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // cmdDoctor diagnoses common issues that prevent Shepherd from working correctly.

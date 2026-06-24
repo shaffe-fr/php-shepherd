@@ -136,6 +136,7 @@ When the version in `.phpversion` differs from what's configured in Herd's nginx
 | `shp status`         | Show current PHP version and configuration                              |
 | `shp xdebug <cmd>`   | Manage xdebug for the resolved PHP version                              |
 | `shp ext add <name>` | Download, install, and configure a PHP extension (DLL + deps + php.ini) |
+| `shp reverb`         | Show Reverb status and .env configuration                               |
 | `shp install`        | Install the `php`/`composer` shims and prepend them to the User PATH    |
 | `shp uninstall`      | Remove the shims and clean up the PATH                                  |
 | `shp doctor`         | Diagnose common issues with Shepherd setup                              |
@@ -144,12 +145,12 @@ When the version in `.phpversion` differs from what's configured in Herd's nginx
 
 ### Global flags
 
-| Flag                | Description                                                                       |
-|---------------------|-----------------------------------------------------------------------------------|
-| `--verbose`         | Show extra diagnostic output                                                      |
-| `--quiet`           | Suppress non-essential output                                                     |
-| `--json`            | Output machine-readable JSON (for scripts & LLMs)                                 |
-| `--no-interactive`  | Skip interactive prompts (auto-detected when stdin is not a terminal)             |
+| Flag               | Description                                                           |
+|--------------------|-----------------------------------------------------------------------|
+| `--verbose`        | Show extra diagnostic output                                          |
+| `--quiet`          | Suppress non-essential output                                         |
+| `--json`           | Output machine-readable JSON (for scripts & LLMs)                     |
+| `--no-interactive` | Skip interactive prompts (auto-detected when stdin is not a terminal) |
 
 These can be placed anywhere in the command:
 
@@ -289,6 +290,64 @@ The command handles the full lifecycle:
 | `--ext-version=V` | Extension version (default: latest from PECL)             |
 | `--ts`            | Use Thread Safe build (default: NTS)                      |
 | `--vs=vsXX`       | Visual Studio version (default: vs17)                     |
+
+## Laravel Reverb (WebSocket)
+
+Show Reverb status and generate the correct `.env` variables for your project — no manual configuration required:
+
+```powershell
+shp reverb                # show Reverb connectivity status
+shp reverb status         # same as above
+shp reverb env            # print the recommended .env variables
+shp reverb env --port=9000  # custom port
+```
+
+### How it works
+
+Reverb (v1.x) on Herd auto-detects SSL certificates when a `hostname` is configured. When you run `herd secure myapp`, Herd generates certs in `~/.config/herd/config/valet/Certificates/`. Reverb finds them automatically and serves WebSockets directly over TLS — no nginx reverse proxy needed.
+
+Shepherd helps by:
+
+1. Detecting the project's `.test` domain from Herd's parked paths
+2. Checking that SSL certificates exist (suggests `herd secure` if not)
+3. Verifying that Reverb is actually listening on the expected port
+4. Printing the correct `.env` values so you don't have to guess
+
+### Status check
+
+```powershell
+shp reverb status
+```
+
+```
+  Reverb: myapp.test:8443
+
+  ✓ SSL certificate found (Reverb will auto-detect it)
+  ✗ Not listening on port 8443
+    → Start Reverb: php artisan reverb:start --host=0.0.0.0 --port=8443
+```
+
+### `.env` configuration
+
+```powershell
+shp reverb env
+```
+
+```env
+REVERB_SERVER_HOST=0.0.0.0
+REVERB_SERVER_PORT=8443
+REVERB_HOST=myapp.test
+REVERB_PORT=8443
+REVERB_SCHEME=https
+
+VITE_REVERB_HOST=myapp.test
+VITE_REVERB_PORT=8443
+VITE_REVERB_SCHEME=https
+```
+
+- `REVERB_SERVER_HOST` / `REVERB_SERVER_PORT` — where Reverb listens (used by `php artisan reverb:start`)
+- `REVERB_HOST` / `REVERB_PORT` — where clients connect (same port since Reverb serves TLS directly)
+- `VITE_REVERB_*` — exposed to the frontend for Echo/Pusher.js
 
 ## Multicall binary
 
