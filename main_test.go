@@ -558,6 +558,39 @@ func TestFindUnguardedAliases(t *testing.T) {
 	}
 }
 
+func TestIsNewerVersion(t *testing.T) {
+	tests := []struct {
+		name      string
+		candidate string
+		current   string
+		want      bool
+	}{
+		{"major bump", "1.0.0", "0.9.0", true},
+		{"minor bump", "0.10.0", "0.9.0", true},
+		{"patch bump", "0.9.1", "0.9.0", true},
+		{"same version", "0.9.0", "0.9.0", false},
+		{"older major", "0.8.0", "1.0.0", false},
+		{"older minor", "0.8.0", "0.9.0", false},
+		{"older patch", "0.9.0", "0.9.1", false},
+		{"different lengths candidate longer", "0.9.0.1", "0.9.0", true},
+		{"different lengths current longer", "0.9.0", "0.9.0.1", false},
+		{"two segment newer", "1.0", "0.9", true},
+		{"two segment same", "0.9", "0.9", false},
+		{"two segment older", "0.8", "0.9", false},
+		{"double digit minor", "0.10", "0.9", true},
+		{"double digit minor equal", "0.10", "0.10", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isNewerVersion(tt.candidate, tt.current)
+			if got != tt.want {
+				t.Errorf("isNewerVersion(%q, %q) = %v, want %v", tt.candidate, tt.current, got, tt.want)
+			}
+		})
+	}
+}
+
 // sliceEqual compares two string slices, treating nil and empty as equivalent.
 func sliceEqual(a, b []string) bool {
 	if len(a) == 0 && len(b) == 0 {
