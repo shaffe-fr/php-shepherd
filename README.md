@@ -392,12 +392,30 @@ otherwise Herd's own `php.exe` wins. The `install` command handles this for you,
 
 ## Troubleshooting
 
+Run `shp doctor` for an automated diagnosis. It checks:
+
+| Check           | What it verifies                                                   |
+|-----------------|--------------------------------------------------------------------|
+| Herd installed  | Herd bin directory exists                                          |
+| .phpversion     | File is valid and the requested PHP version is installed           |
+| Shims installed | `php.exe` and `composer.exe` shims exist in the Shepherd bin dir   |
+| PATH order      | Shepherd comes before Herd in the User PATH (registry + session)   |
+| Shell aliases   | No unguarded `alias php` / `Set-Alias php` overriding Shepherd     |
+| Developer Mode  | Windows Developer Mode enabled (needed for symlinks without admin) |
+| Composer bin    | `%APPDATA%\Composer\vendor\bin` is in PATH                         |
+| CA certificate  | Herd's `cacert.pem` exists (needed for HTTPS from PHP CLI)         |
+| nginx config    | Runs `nginx -t` to validate all site configs (including Reverb)    |
+
+Common issues:
+
 - **`php -v` still shows the wrong version** — run `shp status`. If the shim
   is listed *after* Herd in PATH, re-run `install` and restart your terminal.
 - **Changes don't apply** — the `PATH` is only re-read when a new terminal/session starts.
   Open a fresh terminal.
 - **`php X.Y not found`** — the version in `.phpversion` isn't installed in Herd. Install it
   from the Herd UI, or pick an installed version.
+- **nginx config has errors** — check the file and line reported by `shp doctor`. Common causes:
+  empty `fastcgi_pass` (Shepherd auto-repairs these on next `php` call) or a missing upstream.
 
 ## License
 

@@ -2899,6 +2899,40 @@ func cmdDoctor() {
 		issues++
 	}
 
+	// 9. Check nginx config validity
+	if checkHerd() {
+		nginxBin := filepath.Join(os.Getenv("PROGRAMFILES"), "Herd", "resources", "app.asar.unpacked", "resources", "bin", "nginx", "nginx.exe")
+		nginxConf := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "nginx", "nginx.conf")
+		if _, err := os.Stat(nginxBin); err == nil {
+			nginxPrefix := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "nginx")
+			nginxTestCmd := exec.Command(nginxBin, "-t", "-c", nginxConf, "-p", nginxPrefix)
+			nginxTestCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
+			var stderr bytes.Buffer
+			nginxTestCmd.Stderr = &stderr
+			nginxTestCmd.Stdout = nil
+			testErr := nginxTestCmd.Run()
+			output := stderr.String()
+			if testErr == nil || strings.Contains(output, "syntax is ok") || strings.Contains(output, "test is successful") {
+				if !jsonOutput {
+					fmt.Printf("  ✓ nginx config is valid\n")
+				}
+				addCheck("nginxConfig", "ok", "", "")
+			} else {
+				errDetail := strings.TrimSpace(output)
+				if errDetail == "" {
+					errDetail = testErr.Error()
+				}
+				if !jsonOutput {
+					fmt.Printf("  ✗ nginx config has errors\n")
+					fmt.Printf("    → %s\n", errDetail)
+					fmt.Printf("    → Check files in %s\n", nginxConfDir())
+				}
+				addCheck("nginxConfig", "error", errDetail, "Check files in "+nginxConfDir())
+				issues++
+			}
+		}
+	}
+
 	// Output
 	if jsonOutput {
 		result := map[string]interface{}{
