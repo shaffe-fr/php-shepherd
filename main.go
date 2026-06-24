@@ -34,6 +34,20 @@ var verbose bool
 // quiet suppresses non-essential output.
 var quiet bool
 
+// logVerbose prints a message only when --verbose is active.
+func logVerbose(format string, args ...interface{}) {
+	if verbose {
+		fmt.Fprintf(os.Stderr, "[verbose] "+format+"\n", args...)
+	}
+}
+
+// logInfo prints a message unless --quiet is active.
+func logInfo(format string, args ...interface{}) {
+	if !quiet {
+		fmt.Printf(format, args...)
+	}
+}
+
 // httpClient is the shared HTTP client with a sensible timeout.
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
@@ -386,6 +400,7 @@ func syncNginx(projectDir, version string) {
 		return
 	}
 
+	logVerbose("restarting nginx (configs modified)")
 	bootstrap, err := mostRecentPHP()
 	if err != nil {
 		return
@@ -530,6 +545,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	logVerbose("cwd: %s", cwd)
 	requireHerd()
 
 	var targetPHP string
@@ -540,6 +556,7 @@ func main() {
 	version = findPHPVersion(cwd)
 	if version != "" {
 		fromDotfile = true
+		logVerbose("resolved PHP %s from .phpversion", version)
 		targetPHP, err = resolveFromVersion(version)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "shp: %v\n", err)
@@ -547,6 +564,7 @@ func main() {
 		}
 	} else {
 		// 2. Fallback: ask herd.phar which-php
+		logVerbose("no .phpversion found, falling back to herd.phar which-php")
 		bootstrap, berr := mostRecentPHP()
 		if berr != nil {
 			fmt.Fprintf(os.Stderr, "shp: %v\n", berr)
@@ -558,7 +576,10 @@ func main() {
 			os.Exit(1)
 		}
 		version = extractVersion(targetPHP)
+		logVerbose("herd resolved PHP %s", version)
 	}
+
+	logVerbose("target: %s", targetPHP)
 
 	// Resolve extension_dir
 	extDir := filepath.Join(filepath.Dir(targetPHP), "ext")
@@ -571,15 +592,18 @@ func main() {
 		composerPhar := filepath.Join(herdHome(), "composer.phar")
 		cmdArgs = []string{composerPhar}
 		cmdArgs = append(cmdArgs, os.Args[1:]...)
+		logVerbose("composer mode: %s %v", targetPHP, cmdArgs)
 	} else {
 		// php mode: php.exe -d extension_dir=... <rewritten user args>
 		userArgs := rewriteXdebugArgs(os.Args[1:], version)
 		cmdArgs = []string{"-d", "extension_dir=" + extDir}
 		cmdArgs = append(cmdArgs, userArgs...)
+		logVerbose("php mode: %s %v", targetPHP, cmdArgs)
 	}
 
 	// Sync nginx config in background (if .phpversion exists)
 	if fromDotfile {
+		logVerbose("syncing nginx config for version %s", version)
 		syncNginx(cwd, version)
 	}
 
@@ -901,7 +925,7 @@ func cmdInstall() {
 		// Skip if already identical
 		existing, err := os.ReadFile(dest)
 		if err == nil && bytes.Equal(existing, selfData) {
-			fmt.Printf("  • %s is up to date\n", dest)
+			logInfo("  • %s is up to date\n", dest)
 			continue
 		}
 
@@ -909,7 +933,7 @@ func cmdInstall() {
 			fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", dest, err)
 			os.Exit(1)
 		}
-		fmt.Printf("  ✓ Installed %s\n", dest)
+		logInfo("  ✓ Installed %s\n", dest)
 	}
 
 	// Configure User PATH
@@ -942,10 +966,10 @@ func cmdInstall() {
 	}
 	broadcastSettingChange()
 
-	fmt.Println()
-	fmt.Printf("  ✓ Added %s to the beginning of User PATH\n", dir)
-	fmt.Println()
-	fmt.Println("Done! Restart your terminal for the PATH change to take effect.")
+	logInfo("\n")
+	logInfo("  ✓ Added %s to the beginning of User PATH\n", dir)
+	logInfo("\n")
+	logInfo("Done! Restart your terminal for the PATH change to take effect.\n")
 }
 
 // cmdUninstall removes the shims and restores PATH.
@@ -956,7 +980,7 @@ func cmdUninstall() {
 	if err := os.RemoveAll(dir); err != nil {
 		fmt.Fprintf(os.Stderr, "Error removing %s: %v\n", dir, err)
 	} else {
-		fmt.Printf("  ✓ Removed %s\n", dir)
+		logInfo("  ✓ Removed %s\n", dir)
 	}
 
 	// Remove from User PATH
@@ -981,9 +1005,9 @@ func cmdUninstall() {
 	}
 	broadcastSettingChange()
 
-	fmt.Printf("  ✓ Removed %s from User PATH\n", dir)
-	fmt.Println()
-	fmt.Println("Done! Restart your terminal for the PATH change to take effect.")
+	logInfo("  ✓ Removed %s from User PATH\n", dir)
+	logInfo("\n")
+	logInfo("Done! Restart your terminal for the PATH change to take effect.\n")
 }
 
 // cmdStatus shows the current configuration status.
