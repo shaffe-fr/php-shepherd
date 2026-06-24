@@ -37,6 +37,9 @@ var quiet bool
 // jsonOutput controls whether commands emit machine-readable JSON instead of human text.
 var jsonOutput bool
 
+// noInteractive disables interactive prompts (auto-detected from stdin, or forced via --no-interactive).
+var noInteractive bool
+
 // logVerbose prints a message only when --verbose is active.
 func logVerbose(format string, args ...interface{}) {
 	if verbose {
@@ -480,6 +483,19 @@ func isLaunchedFromExplorer() bool {
 	return strings.EqualFold(parentProcessName(), "explorer.exe")
 }
 
+// isInteractive returns true if stdin is connected to a terminal and --no-interactive was not passed.
+func isInteractive() bool {
+	if noInteractive {
+		return false
+	}
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	// If stdin is a character device (terminal), ModeCharDevice is set.
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
 // confirmInstall prompts the user and returns true if they accept.
 func confirmInstall() bool {
 	fmt.Print("Shepherd is not installed yet. Install now? [Y/n] ")
@@ -527,7 +543,7 @@ func rewriteXdebugArgs(args []string, version string) []string {
 }
 
 func main() {
-	// Parse global flags (--verbose, --quiet, --json) before anything else.
+	// Parse global flags (--verbose, --quiet, --json, --no-interactive) before anything else.
 	// These are stripped from os.Args so subcommands don't see them.
 	var cleanedArgs []string
 	for _, arg := range os.Args {
@@ -538,6 +554,8 @@ func main() {
 			quiet = true
 		case "--json":
 			jsonOutput = true
+		case "--no-interactive":
+			noInteractive = true
 		default:
 			cleanedArgs = append(cleanedArgs, arg)
 		}
@@ -593,17 +611,21 @@ func main() {
 		}
 		// If not installed, propose installation instead of showing help
 		if !isInstalled() {
-			fromExplorer := isLaunchedFromExplorer()
-			if confirmInstall() {
-				cmdInstall()
+			if !isInteractive() {
+				// Non-interactive (CI, piped, etc.) — fall through to show help
 			} else {
-				fmt.Println("Skipped. Run `shp install` when you're ready.")
+				fromExplorer := isLaunchedFromExplorer()
+				if confirmInstall() {
+					cmdInstall()
+				} else {
+					fmt.Println("Skipped. Run `shp install` when you're ready.")
+				}
+				if fromExplorer {
+					fmt.Println("\nPress Enter to close...")
+					fmt.Scanln()
+				}
+				return
 			}
-			if fromExplorer {
-				fmt.Println("\nPress Enter to close...")
-				fmt.Scanln()
-			}
-			return
 		}
 
 		if jsonOutput {
@@ -638,6 +660,7 @@ func main() {
 					{Name: "--verbose", Description: "Show extra diagnostic output"},
 					{Name: "--quiet", Description: "Suppress non-essential output"},
 					{Name: "--json", Description: "Output machine-readable JSON (for scripts and LLMs)"},
+					{Name: "--no-interactive", Description: "Skip interactive prompts (auto-detected when stdin is not a terminal)"},
 				},
 			}
 			enc := json.NewEncoder(os.Stdout)
@@ -661,9 +684,10 @@ func main() {
 		fmt.Println("  version     Show current Shepherd version")
 		fmt.Println()
 		fmt.Println("Global flags:")
-		fmt.Println("  --verbose   Show extra diagnostic output")
-		fmt.Println("  --quiet     Suppress non-essential output")
-		fmt.Println("  --json      Output machine-readable JSON (for scripts and LLMs)")
+		fmt.Println("  --verbose         Show extra diagnostic output")
+		fmt.Println("  --quiet           Suppress non-essential output")
+		fmt.Println("  --json            Output machine-readable JSON (for scripts and LLMs)")
+		fmt.Println("  --no-interactive  Skip interactive prompts (auto-detected when stdin is not a terminal)")
 		fmt.Println()
 		fmt.Println("When invoked as php.exe or composer.exe, acts as a transparent PHP version switcher.")
 		return

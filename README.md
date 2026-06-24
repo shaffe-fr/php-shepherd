@@ -46,6 +46,8 @@ Shepherd is not installed yet. Install now? [Y/n]
 
 That's it. The installer copies the shims (`php.exe`, `composer.exe`, `shp.exe`) into `%USERPROFILE%\.config\shepherd\bin`, prepends that directory to your User PATH, and broadcasts the change to running apps.
 
+> **Non-interactive environments (CI, piped input):** When stdin is not a terminal, Shepherd skips the install prompt and displays the help text instead. You can also pass `--no-interactive` explicitly. Use `shp install` in scripts to install without prompting.
+
 **Restart your terminal** afterward so the new PATH takes effect, then verify:
 
 ```powershell
@@ -142,11 +144,12 @@ When the version in `.phpversion` differs from what's configured in Herd's nginx
 
 ### Global flags
 
-| Flag        | Description                                       |
-|-------------|---------------------------------------------------|
-| `--verbose` | Show extra diagnostic output                      |
-| `--quiet`   | Suppress non-essential output                     |
-| `--json`    | Output machine-readable JSON (for scripts & LLMs) |
+| Flag                | Description                                                                       |
+|---------------------|-----------------------------------------------------------------------------------|
+| `--verbose`         | Show extra diagnostic output                                                      |
+| `--quiet`           | Suppress non-essential output                                                     |
+| `--json`            | Output machine-readable JSON (for scripts & LLMs)                                 |
+| `--no-interactive`  | Skip interactive prompts (auto-detected when stdin is not a terminal)             |
 
 These can be placed anywhere in the command:
 
