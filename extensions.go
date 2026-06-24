@@ -125,7 +125,7 @@ func installWingetDeps(deps []string) error {
 	}
 
 	for _, pkg := range deps {
-		// Check if already installed
+		// Check if already installed (hidden window to avoid console flash)
 		checkCmd := exec.Command("winget", "list", "--id", pkg, "--accept-source-agreements")
 		checkCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 		if out, err := checkCmd.Output(); err == nil && strings.Contains(string(out), pkg) {
@@ -133,14 +133,16 @@ func installWingetDeps(deps []string) error {
 			continue
 		}
 
-		// Install via winget
+		// Install via winget (silent window, non-interactive)
 		fmt.Printf("  Installing %s via winget...\n", pkg)
+		fmt.Printf("    ⚠ This may require UAC elevation (Administrator prompt)\n")
 		installCmd := exec.Command("winget", "install", pkg,
-			"--accept-package-agreements", "--accept-source-agreements")
+			"--accept-package-agreements", "--accept-source-agreements", "--silent")
+		installCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 		installCmd.Stdout = os.Stdout
 		installCmd.Stderr = os.Stderr
 		if err := installCmd.Run(); err != nil {
-			return fmt.Errorf("failed to install %s: %w", pkg, err)
+			return fmt.Errorf("failed to install %s (you may need to run as Administrator): %w", pkg, err)
 		}
 		fmt.Printf("  ✓ %s installed\n", pkg)
 	}
