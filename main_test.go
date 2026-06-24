@@ -450,6 +450,114 @@ func TestValidateDownloadURL(t *testing.T) {
 	}
 }
 
+func TestFindUnguardedAliases(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{
+			name:    "no aliases returns nil",
+			content: "export PATH=$HOME/bin:$PATH\necho hello\n",
+			want:    nil,
+		},
+		{
+			name:    "bash php alias detected",
+			content: "alias php='/usr/local/bin/php8.1'\n",
+			want:    []string{"php"},
+		},
+		{
+			name:    "bash composer alias detected",
+			content: "alias composer='/usr/bin/composer'\n",
+			want:    []string{"composer"},
+		},
+		{
+			name:    "both aliases detected",
+			content: "alias php='/usr/bin/php'\nalias composer='/usr/bin/composer'\n",
+			want:    []string{"composer", "php"},
+		},
+		{
+			name:    "indented alias detected",
+			content: "  alias php='/usr/bin/php'\n",
+			want:    []string{"php"},
+		},
+		{
+			name:    "export alias detected",
+			content: "export alias php='/usr/bin/php'\n",
+			want:    []string{"php"},
+		},
+		{
+			name:    "powershell Set-Alias detected",
+			content: "Set-Alias php C:\\php\\php.exe\n",
+			want:    []string{"php"},
+		},
+		{
+			name:    "powershell New-Alias detected",
+			content: "New-Alias composer C:\\composer\\composer.bat\n",
+			want:    []string{"composer"},
+		},
+		{
+			name:    "powershell sal shorthand detected",
+			content: "sal php C:\\php\\php.exe\n",
+			want:    []string{"php"},
+		},
+		{
+			name:    "powershell nal shorthand detected",
+			content: "nal composer C:\\composer.bat\n",
+			want:    []string{"composer"},
+		},
+		{
+			name:    "guarded with command -v shp returns nil",
+			content: "if ! command -v shp >/dev/null; then\n  alias php='/usr/bin/php'\nfi\n",
+			want:    nil,
+		},
+		{
+			name:    "guarded with which shp returns nil",
+			content: "which shp && alias php='/usr/bin/php'\n",
+			want:    nil,
+		},
+		{
+			name:    "guarded with type shp returns nil",
+			content: "type shp >/dev/null 2>&1 || alias php='/usr/bin/php'\n",
+			want:    nil,
+		},
+		{
+			name:    "guarded with Get-Command shp returns nil",
+			content: "if (Get-Command shp) { Set-Alias php C:\\php.exe }\n",
+			want:    nil,
+		},
+		{
+			name:    "guarded with shepherd/bin/shp path returns nil",
+			content: "# shepherd\\bin\\shp is installed\nalias php='something'\n",
+			want:    nil,
+		},
+		{
+			name:    "guarded with shp:ignore comment returns nil",
+			content: "# shp:ignore\nalias php='/usr/bin/php'\n",
+			want:    nil,
+		},
+		{
+			name:    "unrelated alias not detected",
+			content: "alias ll='ls -la'\nalias vim='nvim'\n",
+			want:    nil,
+		},
+		{
+			name:    "empty content returns nil",
+			content: "",
+			want:    nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findUnguardedAliases(tt.content)
+			if !sliceEqual(got, tt.want) {
+				t.Errorf("findUnguardedAliases() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // sliceEqual compares two string slices, treating nil and empty as equivalent.
 func sliceEqual(a, b []string) bool {
 	if len(a) == 0 && len(b) == 0 {
