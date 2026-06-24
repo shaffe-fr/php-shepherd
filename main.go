@@ -64,6 +64,20 @@ func nilIfEmpty(s string) interface{} {
 	return s
 }
 
+func contains(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+func mustAtoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
 // httpClient is the shared HTTP client with a sensible timeout.
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
@@ -2931,6 +2945,72 @@ func cmdDoctor() {
 				issues++
 			}
 		}
+	}
+
+	// 10. Check that PHP-CGI processes are listening for all isolated versions
+	if checkHerd() {
+		// Read Herd's base PHP port from config.json (default 9000)
+		basePort := 9000
+		herdCfgPath := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "config.json")
+		if cfgData, err := os.ReadFile(herdCfgPath); err == nil {
+			var herdCfg struct {
+				BasePhpPort int `json:"basePhpPort"`
+			}
+			if json.Unmarshal(cfgData, &herdCfg) == nil && herdCfg.BasePhpPort > 0 {
+				basePort = herdCfg.BasePhpPort
+			}
+		}
+
+		// Scan nginx confs for unique $herd_sock_XX references
+		reSock := regexp.MustCompile(`\$herd_sock_(\d+)`)
+		confDir := nginxConfDir()
+		entries, _ := os.ReadDir(confDir)
+		sockVersions := map[string][]string{} // "85" → ["germineo.test"]
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".conf") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(confDir, e.Name()))
+			if err != nil {
+				continue
+			}
+			matches := reSock.FindAllStringSubmatch(string(data), -1)
+			for _, m := range matches {
+				ver := m[1]
+				domain := strings.TrimSuffix(e.Name(), ".conf")
+				if !contains(sockVersions[ver], domain) {
+					sockVersions[ver] = append(sockVersions[ver], domain)
+				}
+			}
+		}
+
+		// For each isolated version, check the port is listening
+		deadVersions := 0
+		for ver, domains := range sockVersions {
+			port := basePort + mustAtoi(ver)
+			listening := checkPort("127.0.0.1", strconv.Itoa(port))
+			prettyVer := ver
+			if len(ver) == 2 {
+				prettyVer = string(ver[0]) + "." + ver[1:]
+			}
+			if listening {
+				if !jsonOutput {
+					fmt.Printf("  ✓ PHP %s (port %d) is running\n", prettyVer, port)
+				}
+				addCheck("phpCgi_"+ver, "ok", fmt.Sprintf("port %d listening", port), "")
+			} else {
+				siteList := strings.Join(domains, ", ")
+				if !jsonOutput {
+					fmt.Printf("  ✗ PHP %s (port %d) is NOT running — affects: %s\n", prettyVer, port, siteList)
+					fmt.Printf("    → Restart Herd completely (quit and relaunch) to start the PHP %s service\n", prettyVer)
+				}
+				addCheck("phpCgi_"+ver, "error",
+					fmt.Sprintf("port %d not listening, affects: %s", port, siteList),
+					"Restart Herd completely to start PHP "+prettyVer)
+				deadVersions++
+			}
+		}
+		issues += deadVersions
 	}
 
 	// Output
