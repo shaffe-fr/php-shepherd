@@ -435,6 +435,60 @@ func cacertPath() string {
 	return filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "php", "cacert.pem")
 }
 
+// isInstalled returns true if the shims are already present in the shepherd bin directory.
+func isInstalled() bool {
+	for _, name := range []string{"php.exe", "composer.exe", "shp.exe"} {
+		if _, err := os.Stat(filepath.Join(shimDir(), name)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// parentProcessName returns the executable name of the parent process (e.g. "explorer.exe").
+func parentProcessName() string {
+	ppid := uint32(os.Getppid())
+	// TH32CS_SNAPPROCESS = 0x00000002
+	snap, err := syscall.CreateToolhelp32Snapshot(0x00000002, 0)
+	if err != nil {
+		return ""
+	}
+	defer syscall.CloseHandle(snap)
+
+	var entry syscall.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+
+	err = syscall.Process32First(snap, &entry)
+	for err == nil {
+		if entry.ProcessID == ppid {
+			end := 0
+			for i, c := range entry.ExeFile {
+				if c == 0 {
+					end = i
+					break
+				}
+			}
+			return syscall.UTF16ToString(entry.ExeFile[:end])
+		}
+		err = syscall.Process32Next(snap, &entry)
+	}
+	return ""
+}
+
+// isLaunchedFromExplorer returns true if the binary was double-clicked from Explorer.
+func isLaunchedFromExplorer() bool {
+	return strings.EqualFold(parentProcessName(), "explorer.exe")
+}
+
+// confirmInstall prompts the user and returns true if they accept.
+func confirmInstall() bool {
+	fmt.Print("Shepherd is not installed yet. Install now? [Y/n] ")
+	var answer string
+	fmt.Scanln(&answer)
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	return answer == "" || answer == "y" || answer == "yes"
+}
+
 // rewriteXdebugArgs rewrites xdebug DLL paths and strips -n flag.
 // Only rewrites arguments that reference the xdebug directory or contain
 // a zend_extension directive pointing to an xdebug DLL.
@@ -537,6 +591,21 @@ func main() {
 				return
 			}
 		}
+		// If not installed, propose installation instead of showing help
+		if !isInstalled() {
+			fromExplorer := isLaunchedFromExplorer()
+			if confirmInstall() {
+				cmdInstall()
+			} else {
+				fmt.Println("Skipped. Run `shp install` when you're ready.")
+			}
+			if fromExplorer {
+				fmt.Println("\nPress Enter to close...")
+				fmt.Scanln()
+			}
+			return
+		}
+
 		fmt.Println("Shepherd - Per-project PHP on Windows, done right.")
 		fmt.Println()
 		fmt.Println("Commands:")

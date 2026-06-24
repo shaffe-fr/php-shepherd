@@ -31,37 +31,33 @@ No batch scripts. No subshells. No recursion. No race conditions.
 
 ## Installation
 
-### 1. Download
-
-Grab the latest `php-shepherd_<version>_windows_<arch>.zip` from the [releases page](https://github.com/shaffe-fr/php-shepherd/releases) and extract `shp.exe` somewhere convenient.
-
-### 2. Run the installer (recommended)
-
-The binary ships with a built-in installer. From the folder where you extracted it:
+1. Grab the latest `php-shepherd_<version>_windows_<arch>.zip` from the [releases page](https://github.com/shaffe-fr/php-shepherd/releases)
+2. Extract it and double-click `shp.exe` — or run it from a terminal:
 
 ```powershell
-.\shp.exe install
+.\shp.exe
 ```
 
-This will:
+Shepherd will detect it's not installed yet and offer to set everything up:
 
-- Copy the binary as `php.exe`, `composer.exe`, and `shp.exe` into
-  `%USERPROFILE%\.config\shepherd\bin`
-- Prepend that directory to your **User** `PATH` (so it takes precedence over Herd's own `php`)
-- Broadcast the environment change to running apps
-
-Use `--force` (or `-f`) to kill running shim processes before overwriting — useful when a previous `php.exe` or `composer.exe` shim is still in use by another process:
-
-```powershell
-.\shp.exe install --force
+```
+Shepherd is not installed yet. Install now? [Y/n]
 ```
 
-Then **restart your terminal** for the `PATH` change to take effect.
+That's it. The installer copies the shims (`php.exe`, `composer.exe`, `shp.exe`) into `%USERPROFILE%\.config\shepherd\bin`, prepends that directory to your User PATH, and broadcasts the change to running apps.
 
-Verify it worked:
+**Restart your terminal** afterward so the new PATH takes effect, then verify:
 
 ```powershell
 shp status
+```
+
+### Options
+
+Use `--force` (or `-f`) to kill running shim processes before overwriting — useful when a previous shim is still locked by another process:
+
+```powershell
+shp install --force
 ```
 
 To remove everything (shims + PATH entry):
