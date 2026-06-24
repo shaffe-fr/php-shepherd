@@ -100,6 +100,13 @@ Create a `.phpversion` file in your project root:
 8.4
 ```
 
+Or use `shp use` to set it (accepts shorthand like `84` without the dot):
+
+```powershell
+shp use 8.4     # writes .phpversion with "8.4"
+shp use 84      # same thing — shorthand without the dot
+```
+
 Then use `php` and `composer` as usual — the correct version is resolved automatically:
 
 ```powershell
@@ -127,7 +134,7 @@ When the version in `.phpversion` differs from what's configured in Herd's nginx
 | Command              | Description                                                             |
 |----------------------|-------------------------------------------------------------------------|
 | `shp use [version]`  | Set the PHP version for the current project, or list available versions |
-| `shp list`           | List available PHP versions                                             |
+| `shp list`           | List available PHP versions (alias: `ls`)                               |
 | `shp status`         | Show current PHP version and configuration                              |
 | `shp xdebug <cmd>`   | Manage xdebug for the resolved PHP version                              |
 | `shp ext add <name>` | Add a PHP extension from PECL                                           |
@@ -204,9 +211,12 @@ Manage xdebug without manually editing `php.ini`:
 ```powershell
 shp xdebug              # show current status (no active change)
 shp xdebug toggle       # toggle on/off
+shp xdebug on           # enable with mode=debug (alias for debug)
+shp xdebug debug        # enable with mode=debug
 shp xdebug coverage     # enable with mode=coverage
 shp xdebug debug,coverage  # both
 shp xdebug profile      # profiling mode
+shp xdebug trace        # function trace mode
 shp xdebug off          # disable xdebug
 shp xdebug status       # show current state
 ```
@@ -249,6 +259,7 @@ Install PHP extensions that aren't bundled with Herd for Windows:
 shp ext add imagick
 shp ext add redis --php=8.4
 shp ext add sqlsrv
+shp ext add igbinary --php=all   # install for every PHP version at once
 ```
 
 Supported extensions: `igbinary`, `imagick`, `memcached`, `pdo_sqlsrv`, `redis`, `sqlsrv`.
@@ -260,6 +271,7 @@ The command handles the entire installation — downloading the extension DLL, p
 | Flag              | Description                                               |
 |-------------------|-----------------------------------------------------------|
 | `--php=X.Y`       | Target PHP version (default: resolved from `.phpversion`) |
+| `--php=all`       | Install the extension for all installed PHP versions      |
 | `--ext-version=V` | Extension version (default: latest from PECL)             |
 | `--ts`            | Use Thread Safe build (default: NTS)                      |
 | `--vs=vsXX`       | Visual Studio version (default: vs17)                     |
