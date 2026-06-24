@@ -2005,6 +2005,36 @@ func cmdDoctor() {
 		}
 	}
 
+	// 6. Check Windows Developer Mode (needed for symlinks without admin)
+	devModeEnabled := checkWindowsDevMode()
+	if devModeEnabled {
+		fmt.Printf("  ✓ Windows Developer Mode is enabled\n")
+	} else {
+		fmt.Printf("  ⚠ Windows Developer Mode is disabled\n")
+		fmt.Printf("    → Commands like 'php artisan storage:link' will fail without Admin privileges\n")
+		fmt.Printf("    → Enable it: Settings → System → For developers → Developer Mode\n")
+		issues++
+	}
+
+	// 7. Check Composer global vendor/bin is in PATH
+	composerGlobalBin := filepath.Join(os.Getenv("APPDATA"), "Composer", "vendor", "bin")
+	if userPath != "" {
+		composerInPath := false
+		for _, e := range strings.Split(userPath, ";") {
+			if strings.EqualFold(strings.TrimRight(e, `\`), strings.TrimRight(composerGlobalBin, `\`)) {
+				composerInPath = true
+				break
+			}
+		}
+		if composerInPath {
+			fmt.Printf("  ✓ Composer global bin is in PATH\n")
+		} else {
+			fmt.Printf("  ⚠ %s is not in PATH\n", composerGlobalBin)
+			fmt.Printf("    → Global Composer tools (laravel, phpstan, etc.) won't be found\n")
+			fmt.Printf("    → Add it to your User PATH or run: setx PATH \"%%PATH%%;%s\"\n", composerGlobalBin)
+			issues++
+		}
+	}
 	// Summary
 	fmt.Println()
 	if issues == 0 {
@@ -2012,6 +2042,26 @@ func cmdDoctor() {
 	} else {
 		fmt.Printf("  Found %d issue(s). Fix them and run 'shp doctor' again.\n", issues)
 	}
+}
+
+// checkWindowsDevMode reads the registry to determine if Developer Mode is enabled.
+// When disabled, symlink creation (e.g. php artisan storage:link) requires admin.
+func checkWindowsDevMode() bool {
+	key, err := registry.OpenKey(
+		registry.LOCAL_MACHINE,
+		`SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock`,
+		registry.QUERY_VALUE,
+	)
+	if err != nil {
+		return false
+	}
+	defer key.Close()
+
+	val, _, err := key.GetIntegerValue("AllowDevelopmentWithoutDevLicense")
+	if err != nil {
+		return false
+	}
+	return val == 1
 }
 
 // doctorCheckAliases scans common shell config files for aliases that override php/composer.
