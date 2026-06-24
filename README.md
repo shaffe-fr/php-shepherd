@@ -129,7 +129,7 @@ When the version in `.phpversion` differs from what's configured in Herd's nginx
 | `shp use [version]`  | Set the PHP version for the current project, or list available versions |
 | `shp list`           | List available PHP versions                                             |
 | `shp status`         | Show current PHP version and configuration                              |
-| `shp xdebug [mode]`  | Toggle xdebug on/off for the resolved PHP version                       |
+| `shp xdebug <cmd>`   | Manage xdebug for the resolved PHP version                              |
 | `shp ext add <name>` | Add a PHP extension from PECL                                           |
 | `shp install`        | Install the `php`/`composer` shims and prepend them to the User PATH    |
 | `shp uninstall`      | Remove the shims and clean up the PATH                                  |
@@ -199,10 +199,11 @@ shp self-update   # update to latest
 
 ## Xdebug management
 
-Toggle xdebug on or off without manually editing `php.ini`:
+Manage xdebug without manually editing `php.ini`:
 
 ```powershell
-shp xdebug              # enable with mode=debug (default)
+shp xdebug              # show current status (no active change)
+shp xdebug toggle       # toggle on/off
 shp xdebug coverage     # enable with mode=coverage
 shp xdebug debug,coverage  # both
 shp xdebug profile      # profiling mode
@@ -229,6 +230,9 @@ shp xdebug off
 shp xdebug debug
 # ... trigger your request ...
 shp xdebug off
+
+# Quick toggle (on/off with mode=debug)
+shp xdebug toggle
 
 # Check current state
 shp xdebug status

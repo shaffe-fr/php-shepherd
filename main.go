@@ -337,7 +337,7 @@ func main() {
 		fmt.Println("  use         Set the PHP version for the current project (.phpversion)")
 		fmt.Println("  list        List available PHP versions")
 		fmt.Println("  status      Show current PHP version and configuration")
-		fmt.Println("  xdebug      Toggle xdebug on/off for the current PHP version")
+		fmt.Println("  xdebug      Manage xdebug for the current PHP version")
 		fmt.Println("  ext         Add PHP extensions from PECL")
 		fmt.Println("  install     Install php.exe and composer.exe shims and configure PATH")
 		fmt.Println("  uninstall   Remove shims and restore PATH")
@@ -987,32 +987,38 @@ func xdebugDLLPath(version string) string {
 	)
 }
 
-// cmdXdebug toggles xdebug on/off in the php.ini for the resolved PHP version.
+// cmdXdebug manages xdebug in the php.ini for the resolved PHP version.
 //
 // Usage:
 //
-//	shp xdebug [mode]
-//	shp xdebug off
-//	shp xdebug status
+//	shp xdebug                Show current status (no active change)
+//	shp xdebug toggle         Toggle xdebug on/off
+//	shp xdebug <mode>         Enable xdebug with a specific mode
+//	shp xdebug off            Disable xdebug
+//	shp xdebug status         Show current xdebug state
 func cmdXdebug() {
-	// Determine desired mode
-	mode := "debug"
-	if len(os.Args) > 2 {
-		mode = strings.ToLower(os.Args[2])
+	// Without arguments, show status (non-active — like other commands)
+	if len(os.Args) <= 2 {
+		cmdXdebugShowStatus()
+		return
 	}
 
+	mode := strings.ToLower(os.Args[2])
+
 	if mode == "-h" || mode == "--help" {
-		fmt.Println("Usage: shp xdebug [mode]")
+		fmt.Println("Usage: shp xdebug <command>")
 		fmt.Println()
-		fmt.Println("Toggle xdebug on/off for the resolved PHP version.")
+		fmt.Println("Manage xdebug for the resolved PHP version.")
 		fmt.Println()
-		fmt.Println("Modes:")
-		fmt.Println("  debug           Debugging (default)")
-		fmt.Println("  coverage        Code coverage")
-		fmt.Println("  debug,coverage  Both")
-		fmt.Println("  profile         Profiling")
-		fmt.Println("  trace           Function trace")
-		fmt.Println("  off             Force disable xdebug")
+		fmt.Println("Commands:")
+		fmt.Println("  toggle          Toggle xdebug on/off")
+		fmt.Println("  on              Enable with debugging mode (alias for debug)")
+		fmt.Println("  debug           Enable with debugging mode")
+		fmt.Println("  coverage        Enable with code coverage mode")
+		fmt.Println("  debug,coverage  Enable with both")
+		fmt.Println("  profile         Enable with profiling mode")
+		fmt.Println("  trace           Enable with function trace mode")
+		fmt.Println("  off             Disable xdebug")
 		fmt.Println("  status          Show current xdebug state")
 		return
 	}
@@ -1071,13 +1077,6 @@ func cmdXdebug() {
 		return
 	}
 
-	// Validate mode
-	if !validXdebugModes[mode] {
-		fmt.Fprintf(os.Stderr, "Error: invalid mode %q\n", mode)
-		fmt.Fprintf(os.Stderr, "Valid modes: debug, coverage, debug,coverage, profile, trace, off\n")
-		os.Exit(1)
-	}
-
 	// Find zend_extension line containing "xdebug"
 	zendIdx := -1
 	zendEnabled := false
@@ -1089,6 +1088,51 @@ func cmdXdebug() {
 			zendEnabled = !strings.HasPrefix(trimmed, ";")
 			break
 		}
+	}
+
+	// Handle "toggle" subcommand: if enabled → off, if off → enable with debug
+	if mode == "toggle" {
+		if zendIdx != -1 && zendEnabled {
+			// Currently on → turn off
+			lines[zendIdx] = ";" + lines[zendIdx]
+			writeIni(iniPath, lines)
+			fmt.Println("  ⏸️  xdebug disabled")
+		} else if zendIdx != -1 {
+			// Currently off → turn on
+			lines[zendIdx] = strings.TrimPrefix(lines[zendIdx], ";")
+			lines = ensureIniValue(lines, zendIdx, "xdebug.mode", "debug")
+			lines = ensureIniValue(lines, zendIdx, "xdebug.discover_client_host", "true")
+			lines = ensureIniValue(lines, zendIdx, "xdebug.start_with_request", "yes")
+			writeIni(iniPath, lines)
+			fmt.Println("  ✅ xdebug enabled (mode: debug)")
+		} else {
+			// No xdebug line — add it
+			dllPath := xdebugDLLPath(version)
+			if _, err := os.Stat(dllPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: xdebug DLL not found at %s\n", dllPath)
+				os.Exit(1)
+			}
+			lines = append(lines, "")
+			lines = append(lines, "zend_extension="+dllPath)
+			lines = append(lines, "xdebug.mode=debug")
+			lines = append(lines, "xdebug.discover_client_host=true")
+			lines = append(lines, "xdebug.start_with_request=yes")
+			writeIni(iniPath, lines)
+			fmt.Println("  ✅ xdebug enabled (mode: debug)")
+		}
+		return
+	}
+
+	// "on" is a shorthand alias for "debug"
+	if mode == "on" {
+		mode = "debug"
+	}
+
+	// Validate mode
+	if !validXdebugModes[mode] {
+		fmt.Fprintf(os.Stderr, "Error: invalid mode %q\n", mode)
+		fmt.Fprintf(os.Stderr, "Valid modes: toggle, on, debug, coverage, debug,coverage, profile, trace, off\n")
+		os.Exit(1)
 	}
 
 	// If "off" is requested, just disable
@@ -1141,6 +1185,56 @@ func cmdXdebug() {
 	} else {
 		fmt.Printf("  ✅ xdebug mode updated to: %s\n", mode)
 	}
+}
+
+// cmdXdebugShowStatus resolves the PHP version and shows the current xdebug state.
+// Called when `shp xdebug` is invoked without arguments.
+func cmdXdebugShowStatus() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	version := findPHPVersion(cwd)
+	var phpDir string
+	if version != "" {
+		phpExe, err := resolveFromVersion(version)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		phpDir = filepath.Dir(phpExe)
+	} else {
+		bootstrap, err := mostRecentPHP()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		resolved, err := whichPHP(bootstrap, cwd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		version = extractVersion(resolved)
+		phpDir = filepath.Dir(resolved)
+	}
+
+	if version == "" {
+		fmt.Fprintf(os.Stderr, "Error: could not determine PHP version\n")
+		os.Exit(1)
+	}
+
+	iniPath := phpIniPath(phpDir)
+	data, err := os.ReadFile(iniPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading php.ini: %v\n", err)
+		os.Exit(1)
+	}
+	lines := strings.Split(string(data), "\n")
+
+	fmt.Printf("PHP %s — %s\n", version, iniPath)
+	xdebugStatus(lines, version)
 }
 
 // xdebugStatus prints the current xdebug state from php.ini lines.
