@@ -325,7 +325,7 @@ func updateNginxConf(confPath, version string) bool {
 	expectedSock := `"$herd_sock_` + nodot + `"`
 	if !strings.Contains(content, "$herd_sock_"+nodot) {
 		reSock := regexp.MustCompile(`"?\$herd_sock(?:_\d+)?"?`)
-		newContent := reSock.ReplaceAllString(content, expectedSock)
+		newContent := reSock.ReplaceAllLiteralString(content, expectedSock)
 		if newContent != content {
 			content = newContent
 			modified = true
@@ -335,7 +335,7 @@ func updateNginxConf(confPath, version string) bool {
 	// Repair empty fastcgi_pass directives (left behind by previous buggy rewrites)
 	reEmptyPass := regexp.MustCompile(`(?m)(fastcgi_pass)\s*;`)
 	if reEmptyPass.MatchString(content) {
-		content = reEmptyPass.ReplaceAllString(content, "fastcgi_pass "+expectedSock+";")
+		content = reEmptyPass.ReplaceAllLiteralString(content, "fastcgi_pass "+expectedSock+";")
 		modified = true
 	}
 
