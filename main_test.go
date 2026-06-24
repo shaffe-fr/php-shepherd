@@ -376,6 +376,80 @@ func TestListSupportedExtensions(t *testing.T) {
 	}
 }
 
+func TestNilIfEmpty(t *testing.T) {
+	tests := []struct {
+		input string
+		want  interface{}
+	}{
+		{"", nil},
+		{"hello", "hello"},
+		{"8.4", "8.4"},
+		{" ", " "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := nilIfEmpty(tt.input)
+			if got != tt.want {
+				t.Errorf("nilIfEmpty(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateDownloadURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{
+			name:    "valid github.com HTTPS",
+			url:     "https://github.com/shaffe-fr/php-shepherd/releases/download/v1.0.0/shp.zip",
+			wantErr: false,
+		},
+		{
+			name:    "valid objects.githubusercontent.com",
+			url:     "https://objects.githubusercontent.com/some/path/file.zip",
+			wantErr: false,
+		},
+		{
+			name:    "rejected HTTP scheme",
+			url:     "http://github.com/some/file.zip",
+			wantErr: true,
+		},
+		{
+			name:    "rejected unknown host",
+			url:     "https://evil.com/malware.zip",
+			wantErr: true,
+		},
+		{
+			name:    "rejected FTP scheme",
+			url:     "ftp://github.com/file.zip",
+			wantErr: true,
+		},
+		{
+			name:    "invalid URL",
+			url:     "://not-a-url",
+			wantErr: true,
+		},
+		{
+			name:    "empty string",
+			url:     "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateDownloadURL(tt.url)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateDownloadURL(%q) error = %v, wantErr %v", tt.url, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // sliceEqual compares two string slices, treating nil and empty as equivalent.
 func sliceEqual(a, b []string) bool {
 	if len(a) == 0 && len(b) == 0 {
