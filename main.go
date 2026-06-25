@@ -517,6 +517,11 @@ func main() {
 
 	logVerbose("target: %s", targetPHP)
 
+	// Warn if composer.json php constraint conflicts with .phpversion
+	if fromDotfile && !quiet {
+		checkComposerPHPConstraint(cwd, phpVersion)
+	}
+
 	// Resolve extension_dir
 	extDir := filepath.Join(filepath.Dir(targetPHP), "ext")
 
