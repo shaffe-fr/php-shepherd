@@ -473,8 +473,30 @@ func main() {
 		logVerbose("resolved PHP %s from .phpversion", phpVersion)
 		targetPHP, err = resolveFromVersion(phpVersion)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "shp: %v\n", err)
-			os.Exit(1)
+			if isInteractive() {
+				fmt.Fprintf(os.Stderr, "PHP %s is not installed.\n", phpVersion)
+				fmt.Fprintf(os.Stderr, "Install it with Herd now? [Y/n] ")
+				var answer string
+				fmt.Scanln(&answer)
+				answer = strings.TrimSpace(strings.ToLower(answer))
+				if answer == "" || answer == "y" || answer == "yes" {
+					if installErr := herdInstallPHP(phpVersion); installErr != nil {
+						fmt.Fprintf(os.Stderr, "shp: installation failed: %v\n", installErr)
+						os.Exit(1)
+					}
+					// Retry resolution after install
+					targetPHP, err = resolveFromVersion(phpVersion)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "shp: %v\n", err)
+						os.Exit(1)
+					}
+				} else {
+					os.Exit(1)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "shp: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	} else {
 		// 2. Fallback: ask herd.phar which-php

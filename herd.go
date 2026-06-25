@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // herdHome returns the Herd bin directory.
@@ -90,4 +92,32 @@ func findProjectDomain(projectDir string) string {
 		}
 	}
 	return ""
+}
+
+// herdInstallPHP installs a PHP version via herd.phar.
+// It uses the highest installed PHP as bootstrap to run herd.phar.
+func herdInstallPHP(version string) error {
+	bootstrap, err := mostRecentPHP()
+	if err != nil {
+		return fmt.Errorf("no PHP available to bootstrap Herd: %w", err)
+	}
+
+	herdPhar := filepath.Join(herdHome(), "herd.phar")
+	if _, err := os.Stat(herdPhar); err != nil {
+		return fmt.Errorf("herd.phar not found at %s", herdPhar)
+	}
+
+	fmt.Printf("  Installing PHP %s via Herd...\n", version)
+
+	cmd := exec.Command(bootstrap, herdPhar, "php:install", version)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("herd php:install %s failed: %w", version, err)
+	}
+
+	fmt.Printf("  ✓ PHP %s installed\n", version)
+	return nil
 }
