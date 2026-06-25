@@ -175,7 +175,10 @@ func cmdXdebug() {
 		if zendIdx != -1 && zendEnabled {
 			// Currently on → turn off
 			lines[zendIdx] = ";" + lines[zendIdx]
-			writeIni(iniPath, lines)
+			if err := writeIni(iniPath, lines); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 			fmt.Println("  ⏸️  xdebug disabled")
 		} else if zendIdx != -1 {
 			// Currently off → turn on
@@ -183,7 +186,10 @@ func cmdXdebug() {
 			lines = ensureIniValue(lines, zendIdx, "xdebug.mode", "debug")
 			lines = ensureIniValue(lines, zendIdx, "xdebug.discover_client_host", "true")
 			lines = ensureIniValue(lines, zendIdx, "xdebug.start_with_request", "yes")
-			writeIni(iniPath, lines)
+			if err := writeIni(iniPath, lines); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 			fmt.Println("  ✅ xdebug enabled (mode: debug)")
 		} else {
 			// No xdebug line — add it
@@ -197,7 +203,10 @@ func cmdXdebug() {
 			lines = append(lines, "xdebug.mode=debug")
 			lines = append(lines, "xdebug.discover_client_host=true")
 			lines = append(lines, "xdebug.start_with_request=yes")
-			writeIni(iniPath, lines)
+			if err := writeIni(iniPath, lines); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 			fmt.Println("  ✅ xdebug enabled (mode: debug)")
 		}
 		return
@@ -226,7 +235,10 @@ func cmdXdebug() {
 			return
 		}
 		lines[zendIdx] = ";" + lines[zendIdx]
-		writeIni(iniPath, lines)
+		if err := writeIni(iniPath, lines); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Println("  ⏸️  xdebug disabled")
 		return
 	}
@@ -244,7 +256,10 @@ func cmdXdebug() {
 		lines = append(lines, "xdebug.mode="+mode)
 		lines = append(lines, "xdebug.discover_client_host=true")
 		lines = append(lines, "xdebug.start_with_request=yes")
-		writeIni(iniPath, lines)
+		if err := writeIni(iniPath, lines); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Printf("  ✅ xdebug enabled (mode: %s)\n", mode)
 		return
 	}
@@ -259,7 +274,10 @@ func cmdXdebug() {
 	lines = ensureIniValue(lines, zendIdx, "xdebug.discover_client_host", "true")
 	lines = ensureIniValue(lines, zendIdx, "xdebug.start_with_request", "yes")
 
-	writeIni(iniPath, lines)
+	if err := writeIni(iniPath, lines); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 	if !zendEnabled {
 		fmt.Printf("  ✅ xdebug enabled (mode: %s)\n", mode)
 	} else {

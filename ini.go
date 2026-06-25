@@ -42,12 +42,12 @@ func ensureIniValue(lines []string, anchorIdx int, key, value string) []string {
 }
 
 // writeIni writes lines back to the php.ini file.
-func writeIni(path string, lines []string) {
+func writeIni(path string, lines []string) error {
 	content := strings.Join(lines, "\n")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", path, err)
-		os.Exit(1)
+		return fmt.Errorf("writing %s: %w", path, err)
 	}
+	return nil
 }
 
 // addExtensionToIni adds extension= or zend_extension= to php.ini if not already present.
