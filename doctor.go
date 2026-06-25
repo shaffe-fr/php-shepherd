@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -348,7 +349,7 @@ func cmdDoctor() {
 			for _, m := range matches {
 				ver := m[1]
 				domain := strings.TrimSuffix(e.Name(), ".conf")
-				if !contains(sockVersions[ver], domain) {
+				if !slices.Contains(sockVersions[ver], domain) {
 					sockVersions[ver] = append(sockVersions[ver], domain)
 				}
 			}

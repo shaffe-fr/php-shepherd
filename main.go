@@ -55,15 +55,6 @@ func nilIfEmpty(s string) interface{} {
 	return s
 }
 
-func contains(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
 func mustAtoi(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n
