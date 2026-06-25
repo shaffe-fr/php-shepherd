@@ -460,7 +460,10 @@ func main() {
 	}
 
 	logVerbose("cwd: %s", cwd)
-	requireHerd()
+	if err := requireHerd(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	var targetPHP string
 	var phpVersion string
@@ -564,7 +567,10 @@ func main() {
 
 // cmdWhich shows how the current PHP version was resolved and where the executable lives.
 func cmdWhich() {
-	requireHerd()
+	if err := requireHerd(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -640,7 +646,10 @@ func cmdWhich() {
 
 // cmdCurrent prints the resolved PHP version number and nothing else.
 func cmdCurrent() {
-	requireHerd()
+	if err := requireHerd(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -675,7 +684,10 @@ func cmdCurrent() {
 
 // cmdList lists available PHP versions (dedicated command for discoverability).
 func cmdList() {
-	requireHerd()
+	if err := requireHerd(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	pattern := filepath.Join(herdHome(), "php*")
 	matches, err := filepath.Glob(pattern)
 	if err != nil || len(matches) == 0 {

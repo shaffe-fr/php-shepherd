@@ -21,13 +21,15 @@ func checkHerd() bool {
 	return err == nil && info.IsDir()
 }
 
-// requireHerd exits with a clear message if Herd is not installed.
-func requireHerd() {
+// errHerdNotInstalled is returned when Herd is not detected.
+var errHerdNotInstalled = fmt.Errorf("Shepherd requires Laravel Herd for Windows.\nInstall it from https://herd.laravel.com")
+
+// requireHerd returns an error if Herd is not installed.
+func requireHerd() error {
 	if !checkHerd() {
-		fmt.Fprintf(os.Stderr, "Shepherd requires Laravel Herd for Windows.\n")
-		fmt.Fprintf(os.Stderr, "Install it from https://herd.laravel.com\n")
-		os.Exit(1)
+		return errHerdNotInstalled
 	}
+	return nil
 }
 
 // herdConfigPath returns the path to Herd's global valet config.json.

@@ -19,7 +19,10 @@ import (
 //	shp reverb status       Same as above
 //	shp reverb env          Print the recommended .env variables
 func cmdReverb() {
-	requireHerd()
+	if err := requireHerd(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	// Help
 	if len(os.Args) > 2 && (os.Args[2] == "-h" || os.Args[2] == "--help") {
