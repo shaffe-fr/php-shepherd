@@ -343,6 +343,12 @@ func main() {
 			case "doctor":
 				cmdDoctor()
 				return
+			case "which":
+				cmdWhich()
+				return
+			case "current":
+				cmdCurrent()
+				return
 			case "list", "ls":
 				cmdList()
 				return
@@ -394,6 +400,8 @@ func main() {
 				Version: version,
 				Commands: []cmdInfo{
 					{Name: "use", Description: "Set the PHP version for the current project (.phpversion)"},
+					{Name: "which", Description: "Show resolved PHP executable path and source"},
+					{Name: "current", Description: "Print the resolved PHP version number"},
 					{Name: "list", Aliases: []string{"ls"}, Description: "List available PHP versions"},
 					{Name: "status", Description: "Show current PHP version and configuration"},
 					{Name: "xdebug", Description: "Manage xdebug for the current PHP version"},
@@ -422,6 +430,8 @@ func main() {
 		fmt.Println()
 		fmt.Println("Commands:")
 		fmt.Println("  use         Set the PHP version for the current project (.phpversion)")
+		fmt.Println("  which       Show resolved PHP executable path and source")
+		fmt.Println("  current     Print the resolved PHP version number")
 		fmt.Println("  list, ls    List available PHP versions")
 		fmt.Println("  status      Show current PHP version and configuration")
 		fmt.Println("  xdebug      Manage xdebug for the current PHP version")
@@ -523,6 +533,117 @@ func main() {
 		}
 		os.Exit(1)
 	}
+}
+
+// cmdWhich shows how the current PHP version was resolved and where the executable lives.
+func cmdWhich() {
+	requireHerd()
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	var phpPath string
+	var phpVersion string
+	source := ""
+	sourceFile := ""
+
+	// Try .phpversion resolution
+	phpVersion = findPHPVersion(cwd)
+	if phpVersion != "" {
+		phpPath, err = resolveFromVersion(phpVersion)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		// Find which .phpversion file was used (walk up)
+		dir := cwd
+		for {
+			candidate := filepath.Join(dir, ".phpversion")
+			if _, serr := os.Stat(candidate); serr == nil {
+				sourceFile = candidate
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+		source = ".phpversion"
+	} else {
+		// Fallback to herd.phar which-php
+		bootstrap, berr := mostRecentPHP()
+		if berr != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", berr)
+			os.Exit(1)
+		}
+		phpPath, err = whichPHP(bootstrap, cwd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		phpVersion = extractVersion(phpPath)
+		source = "herd (global)"
+	}
+
+	if jsonOutput {
+		result := map[string]interface{}{
+			"version":    phpVersion,
+			"executable": phpPath,
+			"source":     source,
+			"sourceFile": nilIfEmpty(sourceFile),
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return
+	}
+
+	fmt.Printf("  PHP version:  %s\n", phpVersion)
+	fmt.Printf("  Executable:   %s\n", phpPath)
+	if sourceFile != "" {
+		fmt.Printf("  Source:       %s (%s)\n", source, sourceFile)
+	} else {
+		fmt.Printf("  Source:       %s\n", source)
+	}
+}
+
+// cmdCurrent prints the resolved PHP version number and nothing else.
+func cmdCurrent() {
+	requireHerd()
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	phpVersion := findPHPVersion(cwd)
+	if phpVersion == "" {
+		// Fallback to herd
+		bootstrap, berr := mostRecentPHP()
+		if berr != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", berr)
+			os.Exit(1)
+		}
+		phpPath, err := whichPHP(bootstrap, cwd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		phpVersion = extractVersion(phpPath)
+	}
+
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		_ = enc.Encode(map[string]string{"version": phpVersion})
+		return
+	}
+
+	fmt.Println(phpVersion)
 }
 
 // cmdList lists available PHP versions (dedicated command for discoverability).
