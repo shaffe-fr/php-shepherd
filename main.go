@@ -765,6 +765,20 @@ func cmdUse() {
 
 	ver := os.Args[2]
 
+	// "latest" writes the highest installed version
+	if strings.EqualFold(ver, "latest") {
+		latestPHP, err := mostRecentPHP()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		ver = extractVersion(latestPHP)
+		if ver == "" {
+			fmt.Fprintf(os.Stderr, "Error: could not determine version from %s\n", latestPHP)
+			os.Exit(1)
+		}
+	}
+
 	// Normalize: allow "84" or "810" as shorthand for "8.4" or "8.10"
 	// Only accept 2-3 digit shorthands (major is always single digit for PHP).
 	if !strings.Contains(ver, ".") && len(ver) >= 2 && len(ver) <= 3 {
