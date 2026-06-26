@@ -1,422 +1,155 @@
 # Shepherd
 
-Per-project PHP on Windows, done right.
+**Per-project PHP version switching on Windows — automatic, instant, zero-config.**
 
-Drop a `.phpversion` file in your project root, and Shepherd ensures both the CLI and Herd's nginx use the correct PHP version — automatically.
+Drop a `.phpversion` file in your project, and `php` / `composer` use the right version. No manual switching, no batch scripts, no broken PATH.
 
 [![CI](https://github.com/shaffe-fr/php-shepherd/actions/workflows/ci.yml/badge.svg)](https://github.com/shaffe-fr/php-shepherd/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## The problem
+```powershell
+# In project-a (PHP 8.4)
+php -v   # → PHP 8.4.x
 
-Herd installs multiple PHP versions side by side but doesn't natively support per-project CLI switching via a simple dotfile. The usual workaround is batch scripts that wrap `php.exe`, but these are fragile — they spawn subshells, suffer from PATH recursion, and break in subtle ways across different terminal emulators.
+cd ../project-b   # .phpversion contains "8.5"
+php -v   # → PHP 8.5.x
+```
 
-## How it works
+## Why
 
-`shp` is a single compiled binary (~2 MB) that replaces both `php` and `composer` in your PATH:
+Laravel Herd installs multiple PHP versions side by side, but doesn't let you pin a version per project from the CLI. The usual workaround is batch scripts wrapping `php.exe` — fragile, slow, and broken across terminals.
 
-1. **Reads `.phpversion`** from the current directory, walking up the tree (like `.nvmrc` for Node)
-2. **Resolves the matching `php.exe`** from Herd's installations (`~/.config/herd/bin/phpXX/`)
-3. **Falls back to `herd.phar which-php`** if no `.phpversion` is found
-4. **Syncs Herd's nginx config** — updates `ISOLATED_PHP_VERSION` and `fastcgi_pass` in the site's `.conf`, then restarts nginx in the background
-5. **Rewrites xdebug paths** to match the resolved PHP version
-6. **Execs the real `php.exe`** with the correct `extension_dir`
+Shepherd replaces that with a single compiled binary (~2 MB) that acts as a transparent shim for `php` and `composer`. It reads `.phpversion`, resolves the right `php.exe` from Herd's installations, syncs nginx, and gets out of the way.
 
-No batch scripts. No subshells. No recursion. No race conditions.
+No subshells. No recursion. No race conditions.
 
 ## Requirements
 
 - [Laravel Herd](https://herd.laravel.com) for Windows
 - Windows 10/11 (amd64 or arm64)
 
-## Installation
+## Quick start
 
-1. Grab the latest `php-shepherd_<version>_windows_<arch>.zip` from the [releases page](https://github.com/shaffe-fr/php-shepherd/releases)
-2. Extract it and double-click `shp.exe` — or run it from a terminal:
-
-```powershell
-.\shp.exe
-```
-
-Shepherd will detect it's not installed yet and offer to set everything up:
+1. Download the latest release from the [releases page](https://github.com/shaffe-fr/php-shepherd/releases)
+2. Run `shp.exe` — it detects it's not installed and offers to set everything up:
 
 ```
 Shepherd is not installed yet. Install now? [Y/n]
 ```
 
-That's it. The installer copies the shims (`php.exe`, `composer.exe`, `shp.exe`) into `%USERPROFILE%\.config\shepherd\bin`, prepends that directory to your User PATH, and broadcasts the change to running apps. If it detects a PowerShell profile that reorders PATH (putting Herd before Shepherd), it also patches the profile to source a Shepherd snippet that keeps the shim directory first. This is fully reversed by `shp uninstall`.
-
-> **Non-interactive environments (CI, piped input):** When stdin is not a terminal, Shepherd skips the install prompt and displays the help text instead. You can also pass `--no-interactive` explicitly. Use `shp install` in scripts to install without prompting.
-
-**Restart your terminal** afterward so the new PATH takes effect, then verify:
+3. Restart your terminal, then:
 
 ```powershell
-shp status
+shp use 8.4      # writes .phpversion
+php -v           # → PHP 8.4.x
+composer install # → uses PHP 8.4
 ```
 
-### Options
+That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in `%USERPROFILE%\.config\shepherd\bin`, prepends it to your PATH, and broadcasts the change.
 
-Use `--force` (or `-f`) to kill running shim processes before overwriting — useful when a previous shim is still locked by another process:
+> **CI / non-interactive:** Use `shp install` in scripts. Interactive prompts are auto-skipped when stdin is not a terminal.
 
-```powershell
-shp install --force
-```
+## How it works
 
-To remove everything (shims + PATH entry):
-
-```powershell
-shp uninstall
-```
-
-<details>
-<summary>Manual installation (alternative)</summary>
-
-If you prefer to manage your own `PATH`, copy the binary under both names into a
-directory that comes **before** Herd's `~/.config/herd/bin` in your `PATH`:
-
-```powershell
-$dest = "$env:USERPROFILE\.bin"
-New-Item -ItemType Directory -Force -Path $dest | Out-Null
-Copy-Item shp.exe "$dest\php.exe"
-Copy-Item shp.exe "$dest\composer.exe"
-```
-
-</details>
-
-### From source
-
-```powershell
-go build -ldflags="-s -w -X main.version=dev" -o shp.exe .
-.\shp.exe install
-```
-
-## Usage
-
-Create a `.phpversion` file in your project root:
-
-```
-8.4
-```
-
-Or use `shp use` to set it (accepts shorthand like `84` without the dot):
-
-```powershell
-shp use 8.4     # writes .phpversion with "8.4"
-shp use 84      # same thing — shorthand without the dot
-```
-
-Then use `php` and `composer` as usual — the correct version is resolved automatically:
-
-```powershell
-cd my-project
-php -v             # → PHP 8.4.x
-php artisan        # → uses PHP 8.4
-composer install   # → uses PHP 8.4
-
-cd ../other-project  # has .phpversion containing "8.5"
-php -v             # → PHP 8.5.x
-```
-
-If no `.phpversion` is found while walking up the tree, Shepherd falls back to asking Herd directly via `herd.phar which-php`.
-
-To see which PHP versions are available:
-
-```powershell
-shp list
-```
-
-When the version in `.phpversion` differs from what's configured in Herd's nginx, Shepherd updates the config and restarts nginx in the background — so your local `.test` domain always matches.
+1. Reads `.phpversion` from the current directory, walking up the tree (like `.nvmrc`)
+2. Resolves the matching `php.exe` from Herd's installs (`~/.config/herd/bin/phpXX/`)
+3. Falls back to `herd.phar which-php` when no dotfile is found
+4. Syncs Herd's nginx config so your `.test` domain matches the CLI version
+5. Execs the real `php.exe` — transparent, no wrapper overhead
 
 ## Commands
 
-| Command              | Description                                                             |
-|----------------------|-------------------------------------------------------------------------|
-| `shp use [version]`  | Set the PHP version for the current project, or list available versions |
-| `shp list`           | List available PHP versions (alias: `ls`)                               |
-| `shp status`         | Show current PHP version and configuration                              |
-| `shp xdebug <cmd>`   | Manage xdebug for the resolved PHP version                              |
-| `shp ext add <name>` | Download, install, and configure a PHP extension (DLL + deps + php.ini) |
-| `shp reverb`         | Show Reverb status and .env configuration                               |
-| `shp install`        | Install the `php`/`composer` shims and prepend them to the User PATH    |
-| `shp uninstall`      | Remove the shims and clean up the PATH                                  |
-| `shp doctor`         | Diagnose common issues with Shepherd setup                              |
-| `shp self-update`    | Update Shepherd to the latest GitHub release (with SHA256 verification) |
-| `shp version`        | Show the current Shepherd version                                       |
+| Command              | Description                                                          |
+|----------------------|----------------------------------------------------------------------|
+| `shp use [version]`  | Set the PHP version for the current project                          |
+| `shp which`          | Show resolved PHP path and source                                    |
+| `shp current`        | Print the resolved PHP version                                       |
+| `shp list`           | List available PHP versions                                          |
+| `shp status`         | Show configuration overview                                          |
+| `shp xdebug <cmd>`   | Toggle/configure xdebug (`on`, `off`, `debug`, `coverage`, `toggle`) |
+| `shp ext add <name>` | Install a PHP extension (DLL + deps + ini)                           |
+| `shp reverb`         | Show Laravel Reverb status and .env config                           |
+| `shp doctor`         | Diagnose common setup issues                                         |
+| `shp self-update`    | Update to the latest release (SHA256-verified)                       |
+| `shp install`        | Install shims and configure PATH                                     |
+| `shp uninstall`      | Remove shims and restore PATH                                        |
+| `shp version`        | Show current version                                                 |
 
 ### Global flags
 
-| Flag               | Description                                                           |
-|--------------------|-----------------------------------------------------------------------|
-| `--verbose`        | Show extra diagnostic output                                          |
-| `--quiet`          | Suppress non-essential output                                         |
-| `--json`           | Output machine-readable JSON (for scripts & LLMs)                     |
-| `--no-interactive` | Skip interactive prompts (auto-detected when stdin is not a terminal) |
+| Flag               | Description                        |
+|--------------------|------------------------------------|
+| `--verbose`        | Extra diagnostic output            |
+| `--quiet`          | Suppress non-essential output      |
+| `--json`           | Machine-readable JSON output       |
+| `--no-interactive` | Skip prompts (auto-detected in CI) |
 
-These can be placed anywhere in the command:
+## Xdebug management
 
-```powershell
-shp status --verbose
-shp ext add redis --quiet
-shp doctor --json
-```
-
-### Machine-readable output
-
-`--json` is a global flag — any command that produces output will emit JSON instead:
+Toggle xdebug without editing `php.ini` manually:
 
 ```powershell
-shp status --json
-shp list --json
-shp xdebug --json
-shp doctor --json
-shp version --json
+shp xdebug on          # enable (mode=debug)
+shp xdebug coverage    # switch to coverage mode
+shp xdebug off         # disable
+shp xdebug toggle      # quick on/off
 ```
 
-Example (`shp status --json`):
+Works on the PHP version resolved for the current project.
 
-```json
-{
-  "phpLocal": "8.4",
-  "phpGlobal": "8.5",
-  "xdebugEnabled": false,
-  "xdebugMode": null,
-  "phpShimInstalled": true,
-  "composerShimInstalled": true,
-  "shimDir": "C:\\Users\\you\\.config\\shepherd\\bin",
-  "pathConfigured": true,
-  "shepherdVersion": "0.5.0"
-}
+## Extension management
+
+Install extensions not bundled with Herd — no manual DLL download:
+
+```powershell
+shp ext add redis
+shp ext add imagick
+shp ext add sqlsrv --php=all   # all installed versions
 ```
 
-When invoked as `php`/`php.exe` or `composer`/`composer.exe`, it acts as a transparent PHP version switcher (see [Multicall binary](#multicall-binary)).
+Supported: `igbinary`, `imagick`, `memcached`, `pdo_sqlsrv`, `redis`, `sqlsrv`.
+
+Handles PECL lookup, DLL download, system deps (winget), ini registration, and verification.
 
 ## Self-update
-
-Update Shepherd to the latest version with a single command:
 
 ```powershell
 shp self-update
 ```
 
-This will:
-
-1. Check the latest release on GitHub
-2. Download the matching archive for your architecture
-3. **Verify the SHA256 checksum** against `checksums.txt` from the release (mandatory — update is refused if verification fails)
-4. Replace the current binary and all installed shims
-
-Downloads are restricted to HTTPS on known GitHub domains only. Releases are signed with [cosign](https://docs.sigstore.dev) (Sigstore keyless) — see [SECURITY.md](SECURITY.md) for manual verification instructions.
-
-```powershell
-shp version       # show current version
-shp self-update   # update to latest
-```
-
-## Xdebug management
-
-Manage xdebug without manually editing `php.ini`:
-
-```powershell
-shp xdebug              # show current status (no active change)
-shp xdebug toggle       # toggle on/off
-shp xdebug on           # enable with mode=debug (alias for debug)
-shp xdebug debug        # enable with mode=debug
-shp xdebug coverage     # enable with mode=coverage
-shp xdebug debug,coverage  # both
-shp xdebug profile      # profiling mode
-shp xdebug trace        # function trace mode
-shp xdebug off          # disable xdebug
-shp xdebug status       # show current state
-```
-
-The command resolves the PHP version the same way as the `php` shim (`.phpversion` → Herd fallback), then edits the matching `php.ini` in place:
-
-- Enables/disables the `zend_extension=...xdebug` line (commenting/uncommenting)
-- Sets `xdebug.mode` to the requested value
-- Ensures `xdebug.discover_client_host=true` and `xdebug.start_with_request=yes` are present
-- If no xdebug line exists, adds one pointing to the correct DLL from Herd's bundled xdebug directory
-
-### Typical workflows
-
-```powershell
-# Run tests with coverage
-shp xdebug coverage
-php artisan test --coverage
-shp xdebug off
-
-# Debug a request (e.g. with PhpStorm)
-shp xdebug debug
-# ... trigger your request ...
-shp xdebug off
-
-# Quick toggle (on/off with mode=debug)
-shp xdebug toggle
-
-# Check current state
-shp xdebug status
-#  ✅ xdebug is enabled (mode: coverage)
-```
-
-Xdebug adds overhead, so toggling it off when you don't need it keeps things fast.
-
-## Extension management
-
-Install and configure PHP extensions that aren't bundled with Herd for Windows — no manual DLL wrangling required:
-
-```powershell
-shp ext add imagick
-shp ext add redis --php=8.4
-shp ext add sqlsrv
-shp ext add igbinary --php=all   # install for every PHP version at once
-```
-
-Supported extensions: `igbinary`, `imagick`, `memcached`, `pdo_sqlsrv`, `redis`, `sqlsrv`.
-
-The command handles the full lifecycle:
-
-1. Detects the latest stable version from PECL (or uses `--ext-version`)
-2. Downloads the pre-built Windows DLL from the official PHP Windows mirror
-3. Installs system-level dependencies via winget when needed (e.g. ODBC Driver for sqlsrv)
-4. Places support libraries (like ImageMagick's DLLs) next to `php.exe`
-5. Registers the extension in `php.ini` (`extension=` or `zend_extension=`)
-6. Verifies the extension loads correctly via `php -m`
-
-### Options
-
-| Flag              | Description                                               |
-|-------------------|-----------------------------------------------------------|
-| `--php=X.Y`       | Target PHP version (default: resolved from `.phpversion`) |
-| `--php=all`       | Install the extension for all installed PHP versions      |
-| `--ext-version=V` | Extension version (default: latest from PECL)             |
-| `--ts`            | Use Thread Safe build (default: NTS)                      |
-| `--vs=vsXX`       | Visual Studio version (default: vs17)                     |
-
-## Laravel Reverb (WebSocket)
-
-Show Reverb status and generate the correct `.env` variables for your project — no manual configuration required:
-
-```powershell
-shp reverb                # show Reverb connectivity status
-shp reverb status         # same as above
-shp reverb env            # print the recommended .env variables
-shp reverb env --port=9000  # custom port
-```
-
-### How it works
-
-Reverb (v1.x) on Herd auto-detects SSL certificates when a `hostname` is configured. When you run `herd secure myapp`, Herd generates certs in `~/.config/herd/config/valet/Certificates/`. Reverb finds them automatically and serves WebSockets directly over TLS — no nginx reverse proxy needed.
-
-Shepherd helps by:
-
-1. Detecting the project's `.test` domain from Herd's parked paths
-2. Checking that SSL certificates exist (suggests `herd secure` if not)
-3. Verifying that Reverb is actually listening on the expected port
-4. Printing the correct `.env` values so you don't have to guess
-
-### Status check
-
-```powershell
-shp reverb status
-```
-
-```
-  Reverb: myapp.test:8443
-
-  ✓ SSL certificate found (Reverb will auto-detect it)
-  ✗ Not listening on port 8443
-    → Start Reverb: php artisan reverb:start --host=0.0.0.0 --port=8443
-```
-
-### `.env` configuration
-
-```powershell
-shp reverb env
-```
-
-```env
-REVERB_SERVER_HOST=0.0.0.0
-REVERB_SERVER_PORT=8443
-REVERB_HOST=myapp.test
-REVERB_PORT=8443
-REVERB_SCHEME=https
-
-VITE_REVERB_HOST=myapp.test
-VITE_REVERB_PORT=8443
-VITE_REVERB_SCHEME=https
-```
-
-- `REVERB_SERVER_HOST` / `REVERB_SERVER_PORT` — where Reverb listens (used by `php artisan reverb:start`)
-- `REVERB_HOST` / `REVERB_PORT` — where clients connect (same port since Reverb serves TLS directly)
-- `VITE_REVERB_*` — exposed to the frontend for Echo/Pusher.js
+Downloads the latest release, verifies SHA256, and replaces all shims. Releases are signed with [cosign](https://docs.sigstore.dev) — see [SECURITY.md](SECURITY.md).
 
 ## Multicall binary
 
-The binary detects how it was invoked via its filename:
+The binary detects how it was invoked:
 
-| Invoked as                   | Behavior                                                                          |
-|------------------------------|-----------------------------------------------------------------------------------|
-| `php` or `php.exe`           | Runs PHP with your arguments                                                      |
-| `composer` or `composer.exe` | Runs `composer.phar` via the resolved PHP                                         |
-| `shp.exe`                    | Management commands (`install`/`uninstall`/`status`/`xdebug`/`ext`/`self-update`) |
+| Invoked as | Behavior |
+|------------|----------|
+| `php` / `php.exe` | Transparent PHP shim |
+| `composer` / `composer.exe` | Runs `composer.phar` via resolved PHP |
+| `shp.exe` | Management commands |
 
-This means you only need one binary — the `install` command sets up all three names for you.
-
-## How nginx sync works
-
-Herd stores the isolated PHP version for each site in its nginx config:
-
-```nginx
-# ISOLATED_PHP_VERSION=8.4
-...
-fastcgi_pass $herd_sock_84;
-```
-
-When you switch versions via `.phpversion`, Shepherd:
-
-1. Checks if the config already matches — if so, does nothing (fast path)
-2. Updates the `ISOLATED_PHP_VERSION` comment and `$herd_sock_XX` references
-3. Restarts nginx via `herd.phar restart nginx` in the background (non-blocking)
-
-This happens transparently on every `php` invocation with no perceptible delay.
-
-## PATH configuration
-
-The shim directory must come **before** Herd's `~/.config/herd/bin` in your `PATH`,
-otherwise Herd's own `php.exe` wins. The `install` command handles this for you, and
-`status` will warn you if the ordering is wrong:
-
-```
-%USERPROFILE%\.config\shepherd\bin       ← shepherd (must be first)
-%USERPROFILE%\.config\herd\bin        ← Herd's default PHP
-```
+One binary, three names — `shp install` sets them all up.
 
 ## Troubleshooting
 
-Run `shp doctor` for an automated diagnosis. It checks:
+```powershell
+shp doctor
+```
 
-| Check           | What it verifies                                                   |
-|-----------------|--------------------------------------------------------------------|
-| Herd installed  | Herd bin directory exists                                          |
-| .phpversion     | File is valid and the requested PHP version is installed           |
-| Shims installed | `php.exe` and `composer.exe` shims exist in the Shepherd bin dir   |
-| PATH order      | Shepherd comes before Herd in the User PATH (registry + session)   |
-| Shell aliases   | No unguarded `alias php` / `Set-Alias php` overriding Shepherd     |
-| Developer Mode  | Windows Developer Mode enabled (needed for symlinks without admin) |
-| Composer bin    | `%APPDATA%\Composer\vendor\bin` is in PATH                         |
-| CA certificate  | Herd's `cacert.pem` exists (needed for HTTPS from PHP CLI)         |
-| nginx config    | Runs `nginx -t` to validate all site configs (including Reverb)    |
-| PHP-CGI ports   | Each isolated PHP version has its CGI process listening            |
+Checks: Herd presence, `.phpversion` validity, shim installation, PATH order, shell aliases, Developer Mode, CA certificate, nginx config, PHP-CGI ports.
 
-Common issues:
+Common fixes:
+- **Wrong PHP version** → `shp status` to check PATH order, then `shp install` + restart terminal
+- **Version not found** → install it from the Herd UI
+- **nginx errors** → `shp doctor` will report the file and line
 
-- **`php -v` still shows the wrong version** — run `shp status`. If the shim
-  is listed *after* Herd in PATH, re-run `install` and restart your terminal.
-- **Changes don't apply** — the `PATH` is only re-read when a new terminal/session starts.
-  Open a fresh terminal.
-- **`php X.Y not found`** — the version in `.phpversion` isn't installed in Herd. Install it
-  from the Herd UI, or pick an installed version.
-- **nginx config has errors** — check the file and line reported by `shp doctor`. Common causes:
-  empty `fastcgi_pass` (Shepherd auto-repairs these on next `php` call) or a missing upstream.
+## Build from source
+
+```powershell
+go build -ldflags="-s -w -X main.version=dev" -o shp.exe .
+.\shp.exe install
+```
 
 ## License
 
