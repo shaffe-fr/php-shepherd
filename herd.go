@@ -22,7 +22,7 @@ func checkHerd() bool {
 }
 
 // errHerdNotInstalled is returned when Herd is not detected.
-var errHerdNotInstalled = fmt.Errorf("Shepherd requires Laravel Herd for Windows.\nInstall it from https://herd.laravel.com")
+var errHerdNotInstalled = fmt.Errorf("shepherd requires Laravel Herd for Windows.\nInstall it from https://herd.laravel.com")
 
 // requireHerd returns an error if Herd is not installed.
 func requireHerd() error {
