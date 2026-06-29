@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // herdHome returns the Herd bin directory.
@@ -114,7 +113,6 @@ func herdInstallPHP(version string) error {
 	cmd := exec.Command(bootstrap, herdPhar, "php:install", version)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("herd php:install %s failed: %w", version, err)

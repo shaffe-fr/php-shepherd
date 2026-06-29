@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"golang.org/x/sys/windows/registry"
 )
@@ -187,7 +186,6 @@ func cmdDoctor() {
 		{"whereComposer", "composer", composerShim},
 	} {
 		whereCmd := exec.Command("where.exe", shimCheck.exe)
-		whereCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 		whereOut, err := whereCmd.Output()
 		if err == nil {
 			whereLines := strings.Split(strings.TrimSpace(string(whereOut)), "\r\n")
@@ -291,7 +289,6 @@ func cmdDoctor() {
 		if _, err := os.Stat(nginxBin); err == nil {
 			nginxPrefix := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "nginx")
 			nginxTestCmd := exec.Command(nginxBin, "-t", "-c", nginxConf, "-p", nginxPrefix)
-			nginxTestCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 			var stderr bytes.Buffer
 			nginxTestCmd.Stderr = &stderr
 			nginxTestCmd.Stdout = nil
@@ -318,7 +315,44 @@ func cmdDoctor() {
 		}
 	}
 
-	// 10. Check that PHP-CGI processes are listening for all isolated versions
+	// 10. Reverb check (only if running inside a Laravel project that uses Reverb)
+	if cwd != "" && isLaravelProject(cwd) && requiresReverb(cwd) {
+		domain := findProjectDomain(cwd)
+		if domain != "" {
+			tld := herdTLD()
+			fqdn := domain + "." + tld
+			reverbPort := 8443
+			certFile := filepath.Join(herdCertsDir(), fqdn+".crt")
+			hasCert := false
+			if _, err := os.Stat(certFile); err == nil {
+				hasCert = true
+			}
+			listening := checkPort(fqdn, strconv.Itoa(reverbPort))
+
+			if !hasCert {
+				if !jsonOutput {
+					fmt.Printf("  ⚠ Reverb: no SSL certificate for %s\n", fqdn)
+					fmt.Printf("    → Run: herd secure %s\n", domain)
+				}
+				addCheck("reverb", "warning", "no certificate for "+fqdn, "herd secure "+domain)
+				issues++
+			} else if !listening {
+				if !jsonOutput {
+					fmt.Printf("  ⚠ Reverb: not listening on wss://%s:%d\n", fqdn, reverbPort)
+					fmt.Printf("    → Start it: php artisan reverb:start --host=0.0.0.0 --port=%d\n", reverbPort)
+				}
+				addCheck("reverb", "warning", fmt.Sprintf("not listening on port %d", reverbPort), "php artisan reverb:start --host=0.0.0.0 --port=8443")
+				issues++
+			} else {
+				if !jsonOutput {
+					fmt.Printf("  ✓ Reverb: wss://%s:%d is reachable\n", fqdn, reverbPort)
+				}
+				addCheck("reverb", "ok", fmt.Sprintf("wss://%s:%d", fqdn, reverbPort), "")
+			}
+		}
+	}
+
+	// 11. Check that PHP-CGI processes are listening for all isolated versions
 	if checkHerd() {
 		// Read Herd's base PHP port from config.json (default 9000)
 		basePort := 9000

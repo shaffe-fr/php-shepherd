@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
-	"syscall"
 )
 
 // extSource defines where and how to download an extension.
@@ -126,20 +125,18 @@ func installWingetDeps(deps []string) error {
 	}
 
 	for _, pkg := range deps {
-		// Check if already installed (hidden window to avoid console flash)
-		checkCmd := exec.Command("winget", "list", "--id", pkg, "--accept-source-agreements")
-		checkCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
-		if out, err := checkCmd.Output(); err == nil && strings.Contains(string(out), pkg) {
+		// Check if already installed using --exact + exit code (locale-independent)
+		checkCmd := exec.Command("winget", "list", "--exact", "--id", pkg, "--accept-source-agreements")
+		if err := checkCmd.Run(); err == nil {
 			fmt.Printf("  ✓ %s already installed\n", pkg)
 			continue
 		}
 
-		// Install via winget (silent window, non-interactive)
+		// Install via winget — no CREATE_NO_WINDOW so UAC prompts display correctly
 		fmt.Printf("  Installing %s via winget...\n", pkg)
 		fmt.Printf("    ⚠ This may require UAC elevation (Administrator prompt)\n")
 		installCmd := exec.Command("winget", "install", pkg,
 			"--accept-package-agreements", "--accept-source-agreements", "--silent")
-		installCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 		installCmd.Stdout = os.Stdout
 		installCmd.Stderr = os.Stderr
 		if err := installCmd.Run(); err != nil {

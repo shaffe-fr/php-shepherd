@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"syscall"
 )
 
 // cmdExt handles the "ext" subcommand for PHP extension management.
@@ -493,7 +492,6 @@ func extractZipFile(f *zip.File, destPath string) error {
 // verifyExtension runs php -m and checks if the extension is loaded.
 func verifyExtension(phpExe, extDir, extName string) bool {
 	cmd := exec.Command(phpExe, "-d", "extension_dir="+extDir, "-m")
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

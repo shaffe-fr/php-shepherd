@@ -140,7 +140,6 @@ func whichPHP(bootstrapPHP, dir string) (string, error) {
 	herdPhar := filepath.Join(herdHome(), "herd.phar")
 	cmd := exec.Command(bootstrapPHP, herdPhar, "which-php", dir)
 	cmd.Stderr = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("which-php failed: %w", err)
@@ -851,7 +850,6 @@ func killShimProcesses(dir string) {
 
 	// Get verbose process list (includes image path)
 	taskCmd := exec.Command("tasklist", "/V", "/FO", "CSV", "/NH")
-	taskCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 	out, err := taskCmd.Output()
 	if err != nil {
 		return
@@ -859,7 +857,6 @@ func killShimProcesses(dir string) {
 
 	// Also try wmic as fallback for older systems where tasklist /V doesn't show paths
 	wmicCmd := exec.Command("wmic", "process", "get", "ProcessId,ExecutablePath", "/format:csv")
-	wmicCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 	wmicOut, _ := wmicCmd.Output()
 
 	// Build PID→path map from wmic output (best effort)
@@ -906,7 +903,6 @@ func killShimProcesses(dir string) {
 			// Try PowerShell as fallback to get the process path
 			psCmd := exec.Command("powershell", "-NoProfile", "-Command",
 				fmt.Sprintf("(Get-Process -Id %d -ErrorAction SilentlyContinue).Path", pid))
-			psCmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 			psOut, psErr := psCmd.Output()
 			if psErr == nil {
 				psPath := strings.TrimSpace(string(psOut))

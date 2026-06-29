@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -195,6 +194,5 @@ func syncNginx(projectDir, version string) {
 	cmd := exec.Command(bootstrap, herdPhar, "restart", "nginx")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 	_ = cmd.Run()
 }
