@@ -12,9 +12,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 // version is set at build time via ldflags.
@@ -215,29 +216,22 @@ func isInstalled() bool {
 // parentProcessName returns the executable name of the parent process (e.g. "explorer.exe").
 func parentProcessName() string {
 	ppid := uint32(os.Getppid())
-	// TH32CS_SNAPPROCESS = 0x00000002
-	snap, err := syscall.CreateToolhelp32Snapshot(0x00000002, 0)
+
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return ""
 	}
-	defer syscall.CloseHandle(snap)
+	defer windows.CloseHandle(snap)
 
-	var entry syscall.ProcessEntry32
+	var entry windows.ProcessEntry32
 	entry.Size = uint32(unsafe.Sizeof(entry))
 
-	err = syscall.Process32First(snap, &entry)
+	err = windows.Process32First(snap, &entry)
 	for err == nil {
 		if entry.ProcessID == ppid {
-			end := 0
-			for i, c := range entry.ExeFile {
-				if c == 0 {
-					end = i
-					break
-				}
-			}
-			return syscall.UTF16ToString(entry.ExeFile[:end])
+			return windows.UTF16ToString(entry.ExeFile[:])
 		}
-		err = syscall.Process32Next(snap, &entry)
+		err = windows.Process32Next(snap, &entry)
 	}
 	return ""
 }

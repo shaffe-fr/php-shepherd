@@ -69,6 +69,25 @@ func TestExtractVersion(t *testing.T) {
 }
 
 func TestRewriteXdebugArgs(t *testing.T) {
+	// Create fake xdebug DLLs so the Glob inside rewriteXdebugArgs finds them.
+	xdebugDir := filepath.Join(os.Getenv("PROGRAMFILES"), "Herd", "resources", "app.asar.unpacked", "resources", "bin", "xdebug")
+	createdDir := false
+	if _, err := os.Stat(xdebugDir); os.IsNotExist(err) {
+		os.MkdirAll(xdebugDir, 0755)
+		createdDir = true
+	}
+	// Create dummy DLLs for versions we'll reference in tests
+	for _, v := range []string{"8.3", "8.4"} {
+		dllPath := filepath.Join(xdebugDir, "xdebug-"+v+".dll")
+		if _, err := os.Stat(dllPath); os.IsNotExist(err) {
+			os.WriteFile(dllPath, []byte("fake"), 0644)
+			defer os.Remove(dllPath)
+		}
+	}
+	if createdDir {
+		defer os.RemoveAll(filepath.Join(os.Getenv("PROGRAMFILES"), "Herd", "resources", "app.asar.unpacked", "resources", "bin", "xdebug"))
+	}
+
 	tests := []struct {
 		name    string
 		args    []string
@@ -110,6 +129,36 @@ func TestRewriteXdebugArgs(t *testing.T) {
 			args:    []string{"-n"},
 			version: "8.4",
 			want:    nil,
+		},
+		{
+			name: "rewrites xdebug DLL version in zend_extension arg",
+			args: []string{
+				"-d", "zend_extension=" + filepath.Join(xdebugDir, "xdebug-8.3.dll"),
+			},
+			version: "8.4",
+			want: []string{
+				"-d", "zend_extension=" + filepath.Join(xdebugDir, "xdebug-8.4.dll"),
+			},
+		},
+		{
+			name: "rewrites xdebug path reference without zend_extension prefix",
+			args: []string{
+				"-d", "something=" + filepath.Join(xdebugDir, "xdebug-8.3.dll"),
+			},
+			version: "8.4",
+			want: []string{
+				"-d", "something=" + filepath.Join(xdebugDir, "xdebug-8.4.dll"),
+			},
+		},
+		{
+			name: "does not rewrite unrelated arg that mentions xdebug without zend_extension",
+			args: []string{
+				"-d", "xdebug.mode=debug",
+			},
+			version: "8.4",
+			want: []string{
+				"-d", "xdebug.mode=debug",
+			},
 		},
 	}
 
