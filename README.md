@@ -123,13 +123,35 @@ Downloads the latest release, verifies SHA256, and replaces all shims. Releases 
 
 The binary detects how it was invoked:
 
-| Invoked as | Behavior |
-|------------|----------|
-| `php` / `php.exe` | Transparent PHP shim |
+| Invoked as                  | Behavior                              |
+|-----------------------------|---------------------------------------|
+| `php` / `php.exe`           | Transparent PHP shim                  |
 | `composer` / `composer.exe` | Runs `composer.phar` via resolved PHP |
-| `shp.exe` | Management commands |
+| `shp.exe`                   | Management commands                   |
 
 One binary, three names — `shp install` sets them all up.
+
+## IDE integration
+
+Point your IDE's PHP interpreter to the Shepherd shim so static analysis matches your terminal:
+
+**PhpStorm:**
+Settings → PHP → CLI Interpreter → `...` → Add Local → path:
+
+```
+%USERPROFILE%\.config\shepherd\bin\php.exe
+```
+
+**VS Code (Intelephense / PHP Intelephense):**
+In `.vscode/settings.json`:
+
+```json
+{
+  "php.validate.executablePath": "${env:USERPROFILE}/.config/shepherd/bin/php.exe"
+}
+```
+
+The shim resolves the correct PHP version per project, so the IDE always uses the same binary as your terminal.
 
 ## Troubleshooting
 
