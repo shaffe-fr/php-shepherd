@@ -760,6 +760,20 @@ func cmdUse() {
 			currentVersion = findPHPVersion(cwd)
 		}
 
+		// Determine latest (highest) version
+		latestVersion := ""
+		for i := len(matches) - 1; i >= 0; i-- {
+			m := matches[i]
+			if _, err := os.Stat(filepath.Join(m, "php.exe")); err != nil {
+				continue
+			}
+			dm := phpDirRe.FindStringSubmatch(filepath.Base(m))
+			if len(dm) == 3 {
+				latestVersion = dm[1] + "." + dm[2]
+				break
+			}
+		}
+
 		fmt.Println("Available PHP versions:")
 		fmt.Println()
 		for _, m := range matches {
@@ -777,8 +791,17 @@ func cmdUse() {
 				continue
 			}
 			ver := dm[1] + "." + dm[2]
+
+			var tags []string
 			if ver == currentVersion {
-				fmt.Printf("  → %s (active)\n", ver)
+				tags = append(tags, "active")
+			}
+			if ver == latestVersion {
+				tags = append(tags, "latest")
+			}
+
+			if len(tags) > 0 {
+				fmt.Printf("  → %s (%s)\n", ver, strings.Join(tags, ", "))
 			} else {
 				fmt.Printf("    %s\n", ver)
 			}
