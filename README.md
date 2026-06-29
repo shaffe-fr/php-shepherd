@@ -61,7 +61,7 @@ That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in 
 
 | Command              | Description                                                          |
 |----------------------|----------------------------------------------------------------------|
-| `shp use [version]`  | Set the PHP version for the current project                          |
+| `shp use [version]`  | Set the PHP version for the current project (`latest` for highest)   |
 | `shp which`          | Show resolved PHP path and source                                    |
 | `shp current`        | Print the resolved PHP version                                       |
 | `shp list`           | List available PHP versions                                          |
