@@ -7,12 +7,15 @@ Drop a `.phpversion` file in your project, and `php` / `composer` use the right 
 [![CI](https://github.com/shaffe-fr/php-shepherd/actions/workflows/ci.yml/badge.svg)](https://github.com/shaffe-fr/php-shepherd/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-```powershell
-# In project-a (PHP 8.4)
-php -v   # → PHP 8.4.x
+```bash
+# Inside project A
+~/projects/api $ php -v
+PHP 8.3.12 (cli) ...
 
-cd ../project-b   # .phpversion contains "8.5"
-php -v   # → PHP 8.5.x
+# Just change directory — Shepherd handles the rest automatically
+~/projects/api $ cd ../frontend
+~/projects/frontend $ php -v
+PHP 8.5.7 (cli) ...
 ```
 
 ## Why
@@ -20,6 +23,8 @@ php -v   # → PHP 8.5.x
 Laravel Herd installs multiple PHP versions side by side, but doesn't let you pin a version per project from the CLI. The usual workaround is batch scripts wrapping `php.exe` — fragile, slow, and broken across terminals.
 
 Shepherd replaces that with a single compiled binary (~2 MB) that acts as a transparent shim for `php` and `composer`. It reads `.phpversion`, resolves the right `php.exe` from Herd's installations, syncs nginx, and gets out of the way.
+
+Shepherd does not alter your Herd installation or replace its binaries. It sits in your user profile PATH, layers on top of Herd, and falls back to Herd's default behavior when no project configuration is found.
 
 No subshells. No recursion. No race conditions.
 
