@@ -11,6 +11,30 @@ import (
 	"time"
 )
 
+// isLaravelProject returns true if the given directory looks like a Laravel project
+// (contains artisan or a composer.json requiring laravel/framework).
+func isLaravelProject(dir string) bool {
+	// Quick check: artisan file exists
+	if _, err := os.Stat(filepath.Join(dir, "artisan")); err == nil {
+		return true
+	}
+	// Fallback: composer.json mentions laravel/framework
+	data, err := os.ReadFile(filepath.Join(dir, "composer.json"))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "laravel/framework")
+}
+
+// requiresReverb returns true if the project's composer.json requires laravel/reverb.
+func requiresReverb(dir string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "composer.json"))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "laravel/reverb")
+}
+
 // cmdReverb shows Reverb status and .env configuration for the current project.
 //
 // Usage:
@@ -44,6 +68,17 @@ func cmdReverb() {
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Guard: only run in a Laravel project that actually uses Reverb
+	if !isLaravelProject(cwd) {
+		fmt.Fprintf(os.Stderr, "Error: not a Laravel project (no artisan or laravel/framework in composer.json).\n")
+		os.Exit(1)
+	}
+	if !requiresReverb(cwd) {
+		fmt.Fprintf(os.Stderr, "Error: laravel/reverb is not required in this project's composer.json.\n")
+		fmt.Fprintf(os.Stderr, "  Install it first: composer require laravel/reverb\n")
 		os.Exit(1)
 	}
 
