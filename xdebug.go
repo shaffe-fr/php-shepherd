@@ -158,15 +158,20 @@ func cmdXdebug() {
 	}
 
 	// Find zend_extension line containing "xdebug"
+	// Handles leading spaces before semicolons (e.g. " ; zend_extension=...")
 	zendIdx := -1
 	zendEnabled := false
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.Contains(strings.ToLower(trimmed), "xdebug") &&
-			(strings.HasPrefix(trimmed, "zend_extension") || strings.HasPrefix(trimmed, ";zend_extension")) {
-			zendIdx = i
-			zendEnabled = !strings.HasPrefix(trimmed, ";")
-			break
+			(strings.HasPrefix(trimmed, "zend_extension") || strings.HasPrefix(trimmed, ";")) {
+			// Confirm it's actually a zend_extension directive (commented or not)
+			uncommented := strings.TrimLeft(trimmed, "; ")
+			if strings.HasPrefix(uncommented, "zend_extension") {
+				zendIdx = i
+				zendEnabled = strings.HasPrefix(trimmed, "zend_extension")
+				break
+			}
 		}
 	}
 
@@ -181,8 +186,9 @@ func cmdXdebug() {
 			}
 			fmt.Println("  ⏸️  xdebug disabled")
 		} else if zendIdx != -1 {
-			// Currently off → turn on
-			lines[zendIdx] = strings.TrimPrefix(lines[zendIdx], ";")
+			// Currently off → turn on (strip leading semicolons and spaces)
+			trimmed := strings.TrimSpace(lines[zendIdx])
+			lines[zendIdx] = strings.TrimLeft(trimmed, "; \t")
 			lines = ensureIniValue(lines, zendIdx, "xdebug.mode", "debug")
 			lines = ensureIniValue(lines, zendIdx, "xdebug.discover_client_host", "true")
 			lines = ensureIniValue(lines, zendIdx, "xdebug.start_with_request", "yes")
@@ -265,8 +271,9 @@ func cmdXdebug() {
 	}
 
 	if !zendEnabled {
-		// Uncomment
-		lines[zendIdx] = strings.TrimPrefix(lines[zendIdx], ";")
+		// Uncomment (strip leading semicolons and spaces)
+		trimmed := strings.TrimSpace(lines[zendIdx])
+		lines[zendIdx] = strings.TrimLeft(trimmed, "; \t")
 	}
 
 	// Ensure xdebug.mode is set correctly

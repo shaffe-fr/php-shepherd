@@ -51,6 +51,8 @@ func writeIni(path string, lines []string) error {
 }
 
 // addExtensionToIni adds extension= or zend_extension= to php.ini if not already present.
+// It inserts the directive at the end of the file but before any trailing section headers,
+// so it won't accidentally end up under an unrelated [Section].
 func addExtensionToIni(iniPath, extName string) error {
 	data, err := os.ReadFile(iniPath)
 	if err != nil {
@@ -65,16 +67,42 @@ func addExtensionToIni(iniPath, extName string) error {
 		directive = "zend_extension"
 	}
 
-	// Check if already present (active or commented)
-	checkRe := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(directive) + `\s*=\s*` + regexp.QuoteMeta(extName))
+	// Check if already present (active or commented — handle leading spaces before semicolons)
+	checkRe := regexp.MustCompile(`(?m)^\s*;?\s*` + regexp.QuoteMeta(directive) + `\s*=\s*` + regexp.QuoteMeta(extName))
 	if checkRe.MatchString(content) {
 		fmt.Printf("  %s=%s already in php.ini\n", directive, extName)
 		return nil
 	}
 
-	// Append
-	content += "\n" + directive + "=" + extName + "\n"
-	if err := os.WriteFile(iniPath, []byte(content), 0644); err != nil {
+	// Find the last non-section line to insert before any trailing [Section] blocks.
+	// This prevents accidentally attaching extensions under [Swoole], [curl], etc.
+	lines := strings.Split(content, "\n")
+	sectionRe := regexp.MustCompile(`^\s*\[.+\]`)
+	insertIdx := len(lines) // default: end of file
+
+	// Walk backwards to find where trailing sections start
+	for i := len(lines) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue // skip blank lines
+		}
+		if sectionRe.MatchString(trimmed) {
+			insertIdx = i
+		} else {
+			break
+		}
+	}
+
+	// Insert the directive
+	newLine := directive + "=" + extName
+	// Build new content: lines before insertIdx + our directive + lines from insertIdx onward
+	before := lines[:insertIdx]
+	after := lines[insertIdx:]
+	result := append(before, "")
+	result = append(result, newLine)
+	result = append(result, after...)
+
+	if err := os.WriteFile(iniPath, []byte(strings.Join(result, "\n")), 0644); err != nil {
 		return err
 	}
 	fmt.Printf("  ✅ Added %s=%s to php.ini\n", directive, extName)
