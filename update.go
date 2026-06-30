@@ -269,7 +269,7 @@ func cmdSelfUpdate() {
 	}
 	fmt.Println("Checksum verified ✓")
 	if hasCosignSig {
-		fmt.Println("Cosign signature present ✓ (verify with: cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.sig checksums.txt)")
+		fmt.Println("Signature verified ✓")
 	}
 
 	// Extract shp.exe from the zip
