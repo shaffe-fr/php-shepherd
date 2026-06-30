@@ -334,6 +334,9 @@ func main() {
 			case "doctor":
 				cmdDoctor()
 				return
+			case "run":
+				cmdRun()
+				return
 			case "which":
 				cmdWhich()
 				return
@@ -391,6 +394,7 @@ func main() {
 				Version: version,
 				Commands: []cmdInfo{
 					{Name: "use", Description: "Set the PHP version for the current project (.phpversion)"},
+					{Name: "run", Description: "Run a command with a specific PHP version"},
 					{Name: "which", Description: "Show resolved PHP executable path and source"},
 					{Name: "current", Description: "Print the resolved PHP version number"},
 					{Name: "list", Aliases: []string{"ls"}, Description: "List available PHP versions"},
@@ -421,6 +425,7 @@ func main() {
 		fmt.Println()
 		fmt.Println("Commands:")
 		fmt.Println("  use         Set the PHP version for the current project (.phpversion)")
+		fmt.Println("  run         Run a command with a specific PHP version")
 		fmt.Println("  which       Show resolved PHP executable path and source")
 		fmt.Println("  current     Print the resolved PHP version number")
 		fmt.Println("  list, ls    List available PHP versions")
@@ -881,6 +886,119 @@ func cmdUse() {
 	}
 
 	fmt.Printf("  ✓ .phpversion set to %s\n", ver)
+}
+
+// cmdRun executes a command with a specific PHP version without modifying .phpversion.
+// Usage: shp run <version> -- <command...>
+func cmdRun() {
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage: shp run <version> -- <command...>\n")
+		fmt.Fprintf(os.Stderr, "\nRun a command with a specific PHP version without modifying .phpversion.\n")
+		fmt.Fprintf(os.Stderr, "\nExamples:\n")
+		fmt.Fprintf(os.Stderr, "  shp run 8.3 -- php artisan test\n")
+		fmt.Fprintf(os.Stderr, "  shp run 8.3 -- composer install\n")
+		os.Exit(1)
+	}
+
+	ver := os.Args[2]
+
+	if ver == "-h" || ver == "--help" {
+		fmt.Println("Usage: shp run <version> -- <command...>")
+		fmt.Println()
+		fmt.Println("Run a command with a specific PHP version without modifying .phpversion.")
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  shp run 8.3 -- php artisan test")
+		fmt.Println("  shp run 8.3 -- composer install")
+		fmt.Println("  shp run latest -- php -v")
+		return
+	}
+
+	// Resolve "latest"
+	if strings.EqualFold(ver, "latest") {
+		latestPHP, err := mostRecentPHP()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		ver = extractVersion(latestPHP)
+	}
+
+	// Normalize shorthand (e.g. "84" → "8.4")
+	if !strings.Contains(ver, ".") && len(ver) >= 2 && len(ver) <= 3 {
+		ver = ver[:1] + "." + ver[1:]
+	}
+
+	if !versionRe.MatchString(ver) {
+		fmt.Fprintf(os.Stderr, "Error: invalid version format %q (expected X.Y, e.g. 8.4)\n", os.Args[2])
+		os.Exit(1)
+	}
+
+	targetPHP, err := resolveFromVersion(ver)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Find the "--" separator
+	sepIdx := -1
+	for i := 3; i < len(os.Args); i++ {
+		if os.Args[i] == "--" {
+			sepIdx = i
+			break
+		}
+	}
+
+	if sepIdx == -1 || sepIdx >= len(os.Args)-1 {
+		fmt.Fprintf(os.Stderr, "Error: missing command after '--'\n")
+		fmt.Fprintf(os.Stderr, "Usage: shp run <version> -- <command...>\n")
+		os.Exit(1)
+	}
+
+	cmdArgs := os.Args[sepIdx+1:]
+	cmdName := cmdArgs[0]
+	cmdName = strings.ToLower(cmdName)
+
+	extDir := filepath.Join(filepath.Dir(targetPHP), "ext")
+
+	var execArgs []string
+	if cmdName == "php" || cmdName == "php.exe" {
+		// Direct PHP invocation: replace php with the resolved one
+		execArgs = []string{"-d", "extension_dir=" + extDir}
+		execArgs = append(execArgs, cmdArgs[1:]...)
+	} else if cmdName == "composer" || cmdName == "composer.exe" {
+		// Composer invocation: run via PHP
+		composerPhar := filepath.Join(herdHome(), "composer.phar")
+		execArgs = []string{composerPhar}
+		execArgs = append(execArgs, cmdArgs[1:]...)
+	} else {
+		// Any other command: just exec it directly, setting PATH so our resolved PHP is first
+		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		// Prepend the PHP dir to PATH so child processes find the right php
+		phpBinDir := filepath.Dir(targetPHP)
+		cmd.Env = append(os.Environ(), "PATH="+phpBinDir+";"+os.Getenv("PATH"))
+		if err := cmd.Run(); err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				os.Exit(exitErr.ExitCode())
+			}
+			os.Exit(1)
+		}
+		return
+	}
+
+	cmd := exec.Command(targetPHP, execArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		os.Exit(1)
+	}
 }
 
 // killShimProcesses kills any running shim processes from the given directory.
