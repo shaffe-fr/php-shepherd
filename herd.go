@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // herdHome returns the Herd bin directory.
@@ -93,6 +95,73 @@ func findProjectDomain(projectDir string) string {
 		}
 	}
 	return ""
+}
+
+// herdBasePort reads Herd's base PHP port from config.json (default 9000).
+func herdBasePort() int {
+	cfgPath := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "config.json")
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return 9000
+	}
+	var cfg struct {
+		BasePhpPort int `json:"basePhpPort"`
+	}
+	if json.Unmarshal(data, &cfg) == nil && cfg.BasePhpPort > 0 {
+		return cfg.BasePhpPort
+	}
+	return 9000
+}
+
+// ensurePhpCgiRunning checks that PHP-CGI for the given version (e.g. "8.1")
+// is listening on its expected port. If not, it restarts Herd's PHP services
+// and waits up to 10 seconds for the port to come up.
+// Returns true if the service is (now) running, false if it could not be started.
+func ensurePhpCgiRunning(phpVersion string) bool {
+	nodot := strings.ReplaceAll(phpVersion, ".", "")
+	port := herdBasePort() + mustAtoi(nodot)
+	portStr := strconv.Itoa(port)
+
+	if checkPort("127.0.0.1", portStr) {
+		return true
+	}
+
+	// PHP-CGI is not running — attempt restart via herd.phar
+	logVerbose("PHP %s (port %d) is not responding, restarting Herd PHP services...", phpVersion, port)
+	if !quiet {
+		fmt.Fprintf(os.Stderr, "shp: PHP %s service is not running, restarting Herd...\n", phpVersion)
+	}
+
+	bootstrap, err := mostRecentPHP()
+	if err != nil {
+		return false
+	}
+	herdPhar := filepath.Join(herdHome(), "herd.phar")
+	if _, err := os.Stat(herdPhar); err != nil {
+		return false
+	}
+
+	cmd := exec.Command(bootstrap, herdPhar, "restart", "php")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	_ = cmd.Run()
+
+	// Wait for the port to come up (poll every 500ms, up to 10s)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(500 * time.Millisecond)
+		if checkPort("127.0.0.1", portStr) {
+			if !quiet {
+				fmt.Fprintf(os.Stderr, "shp: PHP %s service is now running.\n", phpVersion)
+			}
+			return true
+		}
+	}
+
+	if !quiet {
+		fmt.Fprintf(os.Stderr, "shp: PHP %s service did not start. Restart Herd manually.\n", phpVersion)
+	}
+	return false
 }
 
 // herdInstallPHP installs a PHP version via herd.phar.

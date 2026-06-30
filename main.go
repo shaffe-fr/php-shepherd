@@ -533,6 +533,9 @@ func main() {
 	if fromDotfile {
 		logVerbose("syncing nginx config for version %s", phpVersion)
 		syncNginx(cwd, phpVersion)
+
+		// Ensure PHP-CGI service is running for this version
+		ensurePhpCgiRunning(phpVersion)
 	}
 
 	// Exec PHP
