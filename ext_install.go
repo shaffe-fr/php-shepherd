@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -27,6 +28,10 @@ func cmdExt() {
 	switch os.Args[2] {
 	case "add":
 		cmdExtInstall()
+	case "list", "ls":
+		cmdExtList()
+	case "remove", "rm":
+		cmdExtRemove()
 	case "-h", "--help":
 		extUsage()
 	default:
@@ -37,17 +42,22 @@ func cmdExt() {
 }
 
 func extUsage() {
-	fmt.Println("Usage: shp ext add <name> [options]")
+	fmt.Println("Usage: shp ext <command> [options]")
 	fmt.Println()
-	fmt.Println("Add a PHP extension from PECL.")
+	fmt.Println("Manage PHP extensions.")
 	fmt.Println()
-	fmt.Println("Supported extensions:")
+	fmt.Println("Commands:")
+	fmt.Println("  add <name>      Install a PHP extension from PECL")
+	fmt.Println("  list            List installed extensions")
+	fmt.Println("  remove <name>   Remove an installed extension")
+	fmt.Println()
+	fmt.Println("Supported extensions for 'add':")
 	fmt.Printf("  %s\n", strings.Join(listSupportedExtensions(), ", "))
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  --php=X.Y         Target PHP version (default: resolved from .phpversion)")
-	fmt.Println("  --php=all         Install for all PHP versions")
-	fmt.Println("  --ext-version=V   Extension version (default: latest from PECL)")
+	fmt.Println("  --php=all         Apply to all PHP versions")
+	fmt.Println("  --ext-version=V   Extension version for add (default: latest from PECL)")
 	fmt.Println("  --ts              Use Thread Safe build (default: NTS)")
 	fmt.Println("  --vs=vsXX         Visual Studio version (default: vs17)")
 }
@@ -504,4 +514,256 @@ func verifyExtension(phpExe, extDir, extName string) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(stdout.String()), strings.ToLower(extName))
+}
+
+// cmdExtList lists installed (non-bundled) extensions for the resolved PHP version.
+func cmdExtList() {
+	phpVersion := ""
+	for _, arg := range os.Args[3:] {
+		if strings.HasPrefix(arg, "--php=") {
+			phpVersion = strings.TrimPrefix(arg, "--php=")
+		}
+		if arg == "-h" || arg == "--help" {
+			fmt.Println("Usage: shp ext list [--php=X.Y]")
+			fmt.Println()
+			fmt.Println("List extensions installed in the ext/ directory.")
+			fmt.Println("Shows which are enabled in php.ini.")
+			return
+		}
+	}
+
+	if phpVersion == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
+			os.Exit(1)
+		}
+		phpVersion = findPHPVersion(cwd)
+		if phpVersion == "" {
+			// Use most recent
+			php, err := mostRecentPHP()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			phpVersion = extractVersion(php)
+		}
+	}
+
+	nodot := strings.ReplaceAll(phpVersion, ".", "")
+	phpDir := filepath.Join(herdHome(), "php"+nodot)
+	extDir := filepath.Join(phpDir, "ext")
+
+	if _, err := os.Stat(phpDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: PHP %s not found at %s\n", phpVersion, phpDir)
+		os.Exit(1)
+	}
+
+	// Read extensions from ext/ directory
+	entries, err := os.ReadDir(extDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading ext directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Read php.ini to determine which are enabled
+	iniPath := filepath.Join(phpDir, "php.ini")
+	iniData, _ := os.ReadFile(iniPath)
+	iniContent := strings.ToLower(string(iniData))
+
+	type extInfo struct {
+		Name    string `json:"name"`
+		Enabled bool   `json:"enabled"`
+		File    string `json:"file"`
+	}
+
+	var extensions []extInfo
+	extDLLRe := regexp.MustCompile(`(?i)^php_(.+)\.dll$`)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		m := extDLLRe.FindStringSubmatch(entry.Name())
+		if len(m) != 2 {
+			continue
+		}
+		name := m[1]
+		// Check if enabled in php.ini (either extension= or zend_extension=)
+		enabled := strings.Contains(iniContent, "extension="+strings.ToLower(name)) ||
+			strings.Contains(iniContent, "zend_extension="+strings.ToLower(name))
+
+		extensions = append(extensions, extInfo{
+			Name:    name,
+			Enabled: enabled,
+			File:    entry.Name(),
+		})
+	}
+
+	sort.Slice(extensions, func(i, j int) bool {
+		return extensions[i].Name < extensions[j].Name
+	})
+
+	if jsonOutput {
+		result := map[string]interface{}{
+			"phpVersion": phpVersion,
+			"extensions": extensions,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return
+	}
+
+	fmt.Printf("PHP %s — %s\n\n", phpVersion, extDir)
+
+	if len(extensions) == 0 {
+		fmt.Println("  No extensions found in ext/ directory.")
+		return
+	}
+
+	fmt.Printf("  Extensions (%d):\n\n", len(extensions))
+	for _, ext := range extensions {
+		status := "✓"
+		if !ext.Enabled {
+			status = "○"
+		}
+		fmt.Printf("    %s %s\n", status, ext.Name)
+	}
+	fmt.Println()
+	fmt.Println("  ✓ = enabled in php.ini    ○ = DLL present but not enabled")
+}
+
+// cmdExtRemove removes an extension DLL and its php.ini directive.
+func cmdExtRemove() {
+	if len(os.Args) < 4 {
+		fmt.Fprintf(os.Stderr, "Error: extension name required\n")
+		fmt.Fprintf(os.Stderr, "Usage: shp ext remove <name> [--php=X.Y] [--php=all]\n")
+		os.Exit(1)
+	}
+
+	extName := strings.ToLower(os.Args[3])
+	phpVersion := ""
+
+	for _, arg := range os.Args[4:] {
+		switch {
+		case strings.HasPrefix(arg, "--php="):
+			phpVersion = strings.TrimPrefix(arg, "--php=")
+		case arg == "-h" || arg == "--help":
+			fmt.Println("Usage: shp ext remove <name> [--php=X.Y] [--php=all]")
+			fmt.Println()
+			fmt.Println("Remove an extension DLL and disable it in php.ini.")
+			return
+		}
+	}
+
+	if phpVersion == "all" {
+		versions := installedPHPVersions()
+		if len(versions) == 0 {
+			fmt.Fprintf(os.Stderr, "Error: no PHP installations found\n")
+			os.Exit(1)
+		}
+		fmt.Printf("Removing %s from all PHP versions: %s\n\n", extName, strings.Join(versions, ", "))
+		for _, ver := range versions {
+			fmt.Printf("── PHP %s ──\n", ver)
+			removeExtForVersion(extName, ver)
+			fmt.Println()
+		}
+		return
+	}
+
+	if phpVersion == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
+			os.Exit(1)
+		}
+		phpVersion = findPHPVersion(cwd)
+		if phpVersion == "" {
+			fmt.Fprintf(os.Stderr, "Error: no .phpversion found and --php not specified\n")
+			os.Exit(1)
+		}
+	}
+
+	removeExtForVersion(extName, phpVersion)
+}
+
+// removeExtForVersion removes an extension from a specific PHP version.
+func removeExtForVersion(extName, phpVersion string) {
+	nodot := strings.ReplaceAll(phpVersion, ".", "")
+	phpDir := filepath.Join(herdHome(), "php"+nodot)
+	extDir := filepath.Join(phpDir, "ext")
+
+	if _, err := os.Stat(phpDir); err != nil {
+		fmt.Fprintf(os.Stderr, "  Error: PHP %s not found at %s\n", phpVersion, phpDir)
+		return
+	}
+
+	// Remove the DLL(s)
+	dllName := "php_" + extName + ".dll"
+	pdbName := "php_" + extName + ".pdb"
+	removed := false
+
+	dllPath := filepath.Join(extDir, dllName)
+	if _, err := os.Stat(dllPath); err == nil {
+		if err := os.Remove(dllPath); err != nil {
+			fmt.Fprintf(os.Stderr, "  Error removing %s: %v\n", dllPath, err)
+		} else {
+			fmt.Printf("  ✓ Removed %s\n", dllPath)
+			removed = true
+		}
+	}
+
+	pdbPath := filepath.Join(extDir, pdbName)
+	if _, err := os.Stat(pdbPath); err == nil {
+		os.Remove(pdbPath)
+	}
+
+	// Remove from php.ini
+	iniPath := filepath.Join(phpDir, "php.ini")
+	if err := removeExtensionFromIni(iniPath, extName); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
+	} else {
+		fmt.Printf("  ✓ Removed from php.ini\n")
+		removed = true
+	}
+
+	if !removed {
+		fmt.Printf("  Extension %s was not installed for PHP %s\n", extName, phpVersion)
+	}
+}
+
+// removeExtensionFromIni removes or comments out an extension directive from php.ini.
+func removeExtensionFromIni(iniPath, extName string) error {
+	data, err := os.ReadFile(iniPath)
+	if err != nil {
+		return fmt.Errorf("cannot read %s: %w", iniPath, err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	directive := "extension"
+	if def, ok := extensionRegistry[extName]; ok && def.directive != "" {
+		directive = def.directive
+	} else if zendExtensions[extName] {
+		directive = "zend_extension"
+	}
+
+	// Match: extension=extName or zend_extension=extName (with optional spaces)
+	found := false
+	checkRe := regexp.MustCompile(`(?i)^\s*` + regexp.QuoteMeta(directive) + `\s*=\s*` + regexp.QuoteMeta(extName) + `\s*$`)
+
+	var newLines []string
+	for _, line := range lines {
+		if checkRe.MatchString(line) {
+			found = true
+			continue // Remove the line entirely
+		}
+		newLines = append(newLines, line)
+	}
+
+	if !found {
+		return fmt.Errorf("%s=%s not found in php.ini", directive, extName)
+	}
+
+	return os.WriteFile(iniPath, []byte(strings.Join(newLines, "\n")), 0644)
 }

@@ -400,7 +400,7 @@ func main() {
 					{Name: "list", Aliases: []string{"ls"}, Description: "List available PHP versions"},
 					{Name: "status", Description: "Show current PHP version and configuration"},
 					{Name: "xdebug", Description: "Manage xdebug for the current PHP version"},
-					{Name: "ext", Description: "Download, install, and configure a PHP extension"},
+					{Name: "ext", Description: "Manage PHP extensions (add, list, remove)"},
 					{Name: "reverb", Description: "Show Reverb status and .env configuration"},
 					{Name: "install", Description: "Install php.exe and composer.exe shims and configure PATH"},
 					{Name: "uninstall", Description: "Remove shims and restore PATH"},
@@ -431,7 +431,7 @@ func main() {
 		fmt.Println("  list, ls    List available PHP versions")
 		fmt.Println("  status      Show current PHP version and configuration")
 		fmt.Println("  xdebug      Manage xdebug for the current PHP version")
-		fmt.Println("  ext         Download, install, and configure a PHP extension")
+		fmt.Println("  ext         Manage PHP extensions (add, list, remove)")
 		fmt.Println("  reverb      Show Reverb status and .env configuration")
 		fmt.Println("  install     Install php.exe and composer.exe shims and configure PATH")
 		fmt.Println("  uninstall   Remove shims and restore PATH")

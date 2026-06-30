@@ -74,6 +74,8 @@ That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in 
 | `shp status`         | Show configuration overview                                          |
 | `shp xdebug <cmd>`   | Toggle/configure xdebug (`on`, `off`, `debug`, `coverage`, `toggle`) |
 | `shp ext add <name>` | Install a PHP extension (DLL + deps + ini)                           |
+| `shp ext list`       | List installed extensions                                            |
+| `shp ext remove <n>` | Remove an installed extension                                        |
 | `shp reverb`         | Show Laravel Reverb status and .env config                           |
 | `shp doctor`         | Diagnose common setup issues                                         |
 | `shp self-update`    | Update to the latest release (SHA256-verified)                       |
@@ -138,6 +140,14 @@ shp ext add sqlsrv --php=all   # all installed versions
 Supported: `igbinary`, `imagick`, `memcached`, `pdo_sqlsrv`, `redis`, `sqlsrv`.
 
 Handles PECL lookup, DLL download, system deps (winget), ini registration, and verification.
+
+List what's installed and remove what you don't need:
+
+```powershell
+shp ext list               # show extensions for the current PHP version
+shp ext remove redis       # remove DLL and php.ini directive
+shp ext remove redis --php=all
+```
 
 ## Self-update
 
