@@ -293,8 +293,15 @@ func main() {
 		// Passive update check: notify if a newer version is known, and refresh
 		// the cache in the background if stale. Only in interactive, non-quiet,
 		// non-json mode to avoid polluting scripts/CI output.
+		// Show the notice up front (before command output) so it's visible,
+		// and skip it for self-update which manages its own version messaging.
 		if !quiet && !jsonOutput && isInteractive() {
-			defer maybeNotifyUpdate()
+			isSelfUpdate := len(os.Args) > 1 && os.Args[1] == "self-update"
+			if !isSelfUpdate {
+				if maybeNotifyUpdate() {
+					fmt.Fprintln(os.Stderr)
+				}
+			}
 			triggerUpdateCheckIfStale()
 		}
 
