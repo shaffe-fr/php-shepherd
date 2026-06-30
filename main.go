@@ -835,6 +835,21 @@ func cmdUse() {
 		}
 	}
 
+	// "auto" reads composer.json and picks the best installed version
+	if strings.EqualFold(ver, "auto") {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
+			os.Exit(1)
+		}
+		ver = resolveAutoVersion(cwd)
+		if ver == "" {
+			fmt.Fprintf(os.Stderr, "Error: cannot determine PHP version from composer.json\n")
+			fmt.Fprintf(os.Stderr, "  No 'require.php' constraint found, or no installed version satisfies it.\n")
+			os.Exit(1)
+		}
+	}
+
 	// Normalize: allow "84" or "810" as shorthand for "8.4" or "8.10"
 	// Only accept 2-3 digit shorthands (major is always single digit for PHP).
 	if !strings.Contains(ver, ".") && len(ver) >= 2 && len(ver) <= 3 {

@@ -66,7 +66,7 @@ That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in 
 
 | Command              | Description                                                          |
 |----------------------|----------------------------------------------------------------------|
-| `shp use [version]`  | Set the PHP version for the current project (`latest` for highest)   |
+| `shp use [version]`  | Set the PHP version for the current project (`latest`, `auto`)       |
 | `shp which`          | Show resolved PHP path and source                                    |
 | `shp current`        | Print the resolved PHP version                                       |
 | `shp list`           | List available PHP versions                                          |
@@ -101,6 +101,28 @@ shp xdebug toggle      # quick on/off
 ```
 
 Works on the PHP version resolved for the current project.
+
+## Running with a different version
+
+Test compatibility with another PHP version without modifying `.phpversion`:
+
+```powershell
+shp run 8.3 -- php artisan test
+shp run 8.3 -- composer install
+shp run latest -- php -v
+```
+
+The resolved version applies only to that command. Your `.phpversion` stays untouched.
+
+## Auto-detection from composer.json
+
+Don't know which version to pin? Let Shepherd figure it out:
+
+```powershell
+shp use auto
+```
+
+Reads `require.php` from `composer.json`, picks the highest installed version that satisfies the constraint, and writes `.phpversion`. Useful for onboarding onto an existing project.
 
 ## Extension management
 

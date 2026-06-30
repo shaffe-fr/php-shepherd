@@ -155,3 +155,41 @@ func parseVersion(s string) (int, int, bool) {
 	}
 	return major, minor, true
 }
+
+// resolveAutoVersion reads composer.json in the given directory, extracts the
+// require.php constraint, and returns the highest installed PHP version that
+// satisfies it. Returns empty string if no constraint is found or no version matches.
+func resolveAutoVersion(dir string) string {
+	versions := installedPHPVersions()
+	if len(versions) == 0 {
+		return ""
+	}
+
+	composerPath := filepath.Join(dir, "composer.json")
+	data, err := os.ReadFile(composerPath)
+	if err != nil {
+		return ""
+	}
+
+	var composer struct {
+		Require map[string]string `json:"require"`
+	}
+	if err := json.Unmarshal(data, &composer); err != nil {
+		return ""
+	}
+
+	constraint, ok := composer.Require["php"]
+	if !ok || constraint == "" {
+		return ""
+	}
+
+	// Find the highest installed version that satisfies the constraint
+	best := ""
+	for _, ver := range versions {
+		if phpVersionSatisfies(ver, constraint) {
+			best = ver
+		}
+	}
+	return best
+}
+
