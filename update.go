@@ -457,7 +457,7 @@ func replaceBinary(target, newBinary string) error {
 
 	// Write new binary to a temp file in the same directory (ensures same volume for rename)
 	dir := filepath.Dir(target)
-	tmpFile, err := os.CreateTemp(dir, "shp-update-*.exe")
+	tmpFile, err := osCreateTemp(dir, "shp-update-*.exe")
 	if err != nil {
 		// Rollback
 		os.Rename(oldPath, target)
@@ -482,7 +482,7 @@ func replaceBinary(target, newBinary string) error {
 	tmpFile.Close()
 
 	// Atomic rename from temp to target (same volume = atomic on NTFS)
-	if err := os.Rename(tmpPath, target); err != nil {
+	if err := osRenameFunc(tmpPath, target); err != nil {
 		os.Remove(tmpPath)
 		os.Rename(oldPath, target)
 		return fmt.Errorf("cannot rename temp to target: %w", err)
@@ -492,3 +492,7 @@ func replaceBinary(target, newBinary string) error {
 	os.Remove(oldPath)
 	return nil
 }
+
+// osCreateTemp and osRenameFunc are package-level vars for testing seams.
+var osCreateTemp = os.CreateTemp
+var osRenameFunc = os.Rename

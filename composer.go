@@ -192,4 +192,3 @@ func resolveAutoVersion(dir string) string {
 	}
 	return best
 }
-
