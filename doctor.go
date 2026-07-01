@@ -509,8 +509,8 @@ const profileSourceLine = `. "$env:USERPROFILE\.config\shepherd\profile.ps1"`
 func patchPowerShellProfile(shepherdDir string) bool {
 	// 1. Write our own profile snippet
 	snippetPath := shepherdProfilePath()
-	os.MkdirAll(filepath.Dir(snippetPath), 0755)
-	os.WriteFile(snippetPath, []byte(shepherdProfileContent()), 0644)
+	_ = os.MkdirAll(filepath.Dir(snippetPath), 0755)
+	_ = os.WriteFile(snippetPath, []byte(shepherdProfileContent()), 0644)
 
 	// 2. Add source line to user profiles (if not already present)
 	home := os.Getenv("USERPROFILE")
@@ -562,11 +562,11 @@ func unpatchPowerShellProfile() {
 		// Remove the source line and its comment
 		content = strings.ReplaceAll(content, "\n# Shepherd PATH priority\n"+profileSourceLine+"\n", "")
 		content = strings.ReplaceAll(content, "# Shepherd PATH priority\n"+profileSourceLine+"\n", "")
-		os.WriteFile(p, []byte(content), 0644)
+		_ = os.WriteFile(p, []byte(content), 0644)
 	}
 
 	// Remove our snippet file
-	os.Remove(shepherdProfilePath())
+	_ = os.Remove(shepherdProfilePath())
 }
 
 // checkWindowsDevMode reads the registry to determine if Developer Mode is enabled.
@@ -580,7 +580,7 @@ func checkWindowsDevMode() bool {
 	if err != nil {
 		return false
 	}
-	defer key.Close()
+	defer key.Close() //nolint:errcheck // best-effort registry close
 
 	val, _, err := key.GetIntegerValue("AllowDevelopmentWithoutDevLicense")
 	if err != nil {

@@ -84,11 +84,11 @@ func nginxSyncAllowed(domain string) bool {
 func nginxSyncTouch(domain string) {
 	lockPath := nginxSyncLockPath(domain)
 	// Ensure parent directory exists
-	os.MkdirAll(filepath.Dir(lockPath), 0755)
+	_ = os.MkdirAll(filepath.Dir(lockPath), 0755)
 	// Create or update modification time
 	f, err := os.Create(lockPath)
 	if err == nil {
-		f.Close()
+		_ = f.Close()
 	}
 }
 

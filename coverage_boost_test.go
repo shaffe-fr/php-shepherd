@@ -22,9 +22,7 @@ func TestCheckPort_OpenPort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cannot start listener: %v", err)
 	}
-	defer ln.Close()
-
-	// Extract port from listener address
+	defer ln.Close() //nolint:errcheck // test cleanup
 	addr := ln.Addr().(*net.TCPAddr)
 	port := strings.Split(addr.String(), ":")[1]
 
@@ -53,7 +51,7 @@ func TestWriteIni_ErrorOnInvalidPath(t *testing.T) {
 func TestWriteIni_OverwritesExisting(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "php.ini")
-	os.WriteFile(path, []byte("old content"), 0644)
+	_ = os.WriteFile(path, []byte("old content"), 0644)
 
 	newLines := []string{"[PHP]", "memory_limit=512M"}
 	if err := writeIni(path, newLines); err != nil {
@@ -85,11 +83,11 @@ func TestXdebugStatus_TextMode_Enabled(t *testing.T) {
 	xdebugStatus(lines, "8.4")
 	jsonOutput = oldJsonOutput
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	_, _ = buf.ReadFrom(r)
 	output := buf.String()
 
 	if !strings.Contains(output, "enabled") {
@@ -115,11 +113,11 @@ func TestXdebugStatus_TextMode_Disabled(t *testing.T) {
 	xdebugStatus(lines, "8.4")
 	jsonOutput = oldJsonOutput
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	_, _ = buf.ReadFrom(r)
 	output := buf.String()
 
 	if !strings.Contains(output, "disabled") {
@@ -142,11 +140,11 @@ func TestXdebugStatus_TextMode_EnabledNoMode(t *testing.T) {
 	xdebugStatus(lines, "8.4")
 	jsonOutput = oldJsonOutput
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	_, _ = buf.ReadFrom(r)
 	output := buf.String()
 
 	if !strings.Contains(output, "default") {
@@ -159,7 +157,7 @@ func TestXdebugStatus_TextMode_EnabledNoMode(t *testing.T) {
 func TestDownloadFile_RedirectToHTTP(t *testing.T) {
 	// First server (target) — plain HTTP
 	httpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("bad content"))
+		_, _ = w.Write([]byte("bad content"))
 	}))
 	defer httpSrv.Close()
 
@@ -201,7 +199,7 @@ func TestDownloadFile_SizeLimitPath(t *testing.T) {
 	// by verifying the size-limited read succeeds for normal content.
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Write a reasonable amount — exercises io.Copy and size check (n <= max)
-		w.Write(bytes.Repeat([]byte("x"), 1024))
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 1024))
 	}))
 	defer srv.Close()
 
@@ -213,7 +211,7 @@ func TestDownloadFile_SizeLimitPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	defer os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
 
 	data, _ := os.ReadFile(path)
 	if len(data) != 1024 {
@@ -224,7 +222,7 @@ func TestDownloadFile_SizeLimitPath(t *testing.T) {
 func TestDownloadFile_ConnectionError(t *testing.T) {
 	// Use a server that immediately closes — exercises the httpClient.Get error path
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	}))
 	client := srv.Client()
 	srv.Close() // close immediately
@@ -244,7 +242,7 @@ func TestDownloadFile_ConnectionError(t *testing.T) {
 func TestExtractBinaryFromZip_InvalidZipFile(t *testing.T) {
 	dir := t.TempDir()
 	zipPath := filepath.Join(dir, "bad.zip")
-	os.WriteFile(zipPath, []byte("not a zip file at all"), 0644)
+	_ = os.WriteFile(zipPath, []byte("not a zip file at all"), 0644)
 
 	_, err := extractBinaryFromZip(zipPath, "shp.exe")
 	if err == nil {
@@ -269,9 +267,9 @@ func TestExtractBinaryFromZip_OversizedEntry(t *testing.T) {
 	f, _ := os.Create(zipPath)
 	w := zip.NewWriter(f)
 	entry, _ := w.Create("shp.exe")
-	entry.Write([]byte("small"))
-	w.Close()
-	f.Close()
+	_, _ = entry.Write([]byte("small"))
+	_ = w.Close()
+	_ = f.Close()
 
 	// Read the zip and patch the uncompressed size in the central directory.
 	// The central dir has the filename "shp.exe" — find it and patch the 4 bytes
@@ -296,7 +294,7 @@ func TestExtractBinaryFromZip_OversizedEntry(t *testing.T) {
 		binary.LittleEndian.PutUint32(data[lfIdx+22:], bigSize)
 	}
 
-	os.WriteFile(zipPath, data, 0644)
+	_ = os.WriteFile(zipPath, data, 0644)
 
 	_, err := extractBinaryFromZip(zipPath, "shp.exe")
 	if err == nil {
@@ -316,9 +314,9 @@ func TestExtractBinaryFromZip_CorruptEntryData(t *testing.T) {
 	f, _ := os.Create(zipPath)
 	w := zip.NewWriter(f)
 	entry, _ := w.Create("shp.exe")
-	entry.Write([]byte("valid content"))
-	w.Close()
-	f.Close()
+	_, _ = entry.Write([]byte("valid content"))
+	_ = w.Close()
+	_ = f.Close()
 
 	// Corrupt the data section (overwrite bytes in the middle)
 	data, _ := os.ReadFile(zipPath)
@@ -327,7 +325,7 @@ func TestExtractBinaryFromZip_CorruptEntryData(t *testing.T) {
 		for i := 30; i < 40 && i < len(data); i++ {
 			data[i] ^= 0xFF
 		}
-		os.WriteFile(zipPath, data, 0644)
+		_ = os.WriteFile(zipPath, data, 0644)
 	}
 
 	// This might error or might not depending on how the zip library handles it
@@ -340,10 +338,10 @@ func TestExtractBinaryFromZip_CorruptEntryData(t *testing.T) {
 func TestReplaceBinary_Success(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "shp.exe")
-	os.WriteFile(target, []byte("original binary"), 0755)
+	_ = os.WriteFile(target, []byte("original binary"), 0755)
 
 	newBin := filepath.Join(dir, "new.exe")
-	os.WriteFile(newBin, []byte("updated binary"), 0755)
+	_ = os.WriteFile(newBin, []byte("updated binary"), 0755)
 
 	if err := replaceBinary(target, newBin); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -363,7 +361,7 @@ func TestReplaceBinary_Success(t *testing.T) {
 func TestReplaceBinary_NewBinaryNotReadable(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "shp.exe")
-	os.WriteFile(target, []byte("original"), 0755)
+	_ = os.WriteFile(target, []byte("original"), 0755)
 
 	newBin := filepath.Join(dir, "nonexistent.exe")
 	// Don't create newBin — it doesn't exist
@@ -388,7 +386,7 @@ func TestReplaceBinary_TargetDoesNotExist(t *testing.T) {
 	target := filepath.Join(dir, "nonexistent.exe")
 
 	newBin := filepath.Join(dir, "new.exe")
-	os.WriteFile(newBin, []byte("new"), 0755)
+	_ = os.WriteFile(newBin, []byte("new"), 0755)
 
 	err := replaceBinary(target, newBin)
 	if err == nil {
@@ -399,14 +397,14 @@ func TestReplaceBinary_TargetDoesNotExist(t *testing.T) {
 func TestReplaceBinary_CleansUpPreviousOldFile(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "shp.exe")
-	os.WriteFile(target, []byte("current"), 0755)
+	_ = os.WriteFile(target, []byte("current"), 0755)
 
 	// Create a stale .old file
 	oldPath := target + ".old"
-	os.WriteFile(oldPath, []byte("ancient"), 0755)
+	_ = os.WriteFile(oldPath, []byte("ancient"), 0755)
 
 	newBin := filepath.Join(dir, "new.exe")
-	os.WriteFile(newBin, []byte("newest"), 0755)
+	_ = os.WriteFile(newBin, []byte("newest"), 0755)
 
 	if err := replaceBinary(target, newBin); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -422,17 +420,17 @@ func TestReplaceBinary_ReadOnlyTargetDir(t *testing.T) {
 	// On Windows, we can simulate by using a path that's invalid for temp creation
 	dir := t.TempDir()
 	target := filepath.Join(dir, "shp.exe")
-	os.WriteFile(target, []byte("original"), 0755)
+	_ = os.WriteFile(target, []byte("original"), 0755)
 
 	newBin := filepath.Join(dir, "new.exe")
-	os.WriteFile(newBin, []byte("new content"), 0755)
+	_ = os.WriteFile(newBin, []byte("new content"), 0755)
 
 	// Make the directory read-only to prevent temp file creation
 	// This is tricky on Windows — skip if we can't set permissions
 	if err := os.Chmod(dir, 0555); err != nil {
 		t.Skip("cannot set directory permissions on this platform")
 	}
-	defer os.Chmod(dir, 0755)
+	defer func() { _ = os.Chmod(dir, 0755) }()
 
 	// The rename of target to .old might succeed, but CreateTemp should fail
 	// Either way we're exercising error paths
@@ -443,10 +441,10 @@ func TestReplaceBinary_EmptyNewBinary(t *testing.T) {
 	// Exercise the write path with zero-length data
 	dir := t.TempDir()
 	target := filepath.Join(dir, "shp.exe")
-	os.WriteFile(target, []byte("has content"), 0755)
+	_ = os.WriteFile(target, []byte("has content"), 0755)
 
 	newBin := filepath.Join(dir, "empty.exe")
-	os.WriteFile(newBin, []byte{}, 0755)
+	_ = os.WriteFile(newBin, []byte{}, 0755)
 
 	if err := replaceBinary(target, newBin); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -462,13 +460,13 @@ func TestReplaceBinary_VerifyRollbackOnCreateTempError(t *testing.T) {
 	// Exercises replaceBinary with target in a nested subdirectory
 	dir := t.TempDir()
 	subdir := filepath.Join(dir, "bin")
-	os.MkdirAll(subdir, 0755)
+	_ = os.MkdirAll(subdir, 0755)
 
 	target := filepath.Join(subdir, "shp.exe")
-	os.WriteFile(target, []byte("original"), 0755)
+	_ = os.WriteFile(target, []byte("original"), 0755)
 
 	newBin := filepath.Join(dir, "new.exe")
-	os.WriteFile(newBin, []byte("updated"), 0755)
+	_ = os.WriteFile(newBin, []byte("updated"), 0755)
 
 	if err := replaceBinary(target, newBin); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -484,11 +482,11 @@ func TestReplaceBinary_LargeBinary(t *testing.T) {
 	// Exercises the full write path with more than trivial data
 	dir := t.TempDir()
 	target := filepath.Join(dir, "shp.exe")
-	os.WriteFile(target, []byte("old binary data here with some padding to be real"), 0755)
+	_ = os.WriteFile(target, []byte("old binary data here with some padding to be real"), 0755)
 
 	newContent := bytes.Repeat([]byte("NEWBIN"), 1000)
 	newBin := filepath.Join(dir, "new.exe")
-	os.WriteFile(newBin, newContent, 0755)
+	_ = os.WriteFile(newBin, newContent, 0755)
 
 	if err := replaceBinary(target, newBin); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -506,10 +504,10 @@ func TestReplaceBinary_NewBinaryOnDifferentPath(t *testing.T) {
 	sourceDir := t.TempDir()
 
 	target := filepath.Join(targetDir, "shp.exe")
-	os.WriteFile(target, []byte("original"), 0755)
+	_ = os.WriteFile(target, []byte("original"), 0755)
 
 	newBin := filepath.Join(sourceDir, "downloaded.exe")
-	os.WriteFile(newBin, []byte("from-network"), 0755)
+	_ = os.WriteFile(newBin, []byte("from-network"), 0755)
 
 	if err := replaceBinary(target, newBin); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -524,10 +522,10 @@ func TestReplaceBinary_NewBinaryOnDifferentPath(t *testing.T) {
 func TestReplaceBinary_CreateTempFails(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "shp.exe")
-	os.WriteFile(target, []byte("original"), 0755)
+	_ = os.WriteFile(target, []byte("original"), 0755)
 
 	newBin := filepath.Join(dir, "new.exe")
-	os.WriteFile(newBin, []byte("new"), 0755)
+	_ = os.WriteFile(newBin, []byte("new"), 0755)
 
 	// Inject a failing CreateTemp
 	origCreateTemp := osCreateTemp
@@ -554,10 +552,10 @@ func TestReplaceBinary_CreateTempFails(t *testing.T) {
 func TestReplaceBinary_FinalRenameFails(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "shp.exe")
-	os.WriteFile(target, []byte("original"), 0755)
+	_ = os.WriteFile(target, []byte("original"), 0755)
 
 	newBin := filepath.Join(dir, "new.exe")
-	os.WriteFile(newBin, []byte("updated"), 0755)
+	_ = os.WriteFile(newBin, []byte("updated"), 0755)
 
 	// Inject a failing final rename (only the second call to rename via osRenameFunc)
 	origRename := osRenameFunc

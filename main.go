@@ -85,13 +85,21 @@ var versionRe = regexp.MustCompile(`^\d+\.\d+$`)
 // findPHPVersion walks up from dir looking for a .phpversion file.
 // Returns the version string (e.g. "8.5") or empty if not found.
 func findPHPVersion(dir string) string {
+	ver, _ := findPHPVersionFile(dir)
+	return ver
+}
+
+// findPHPVersionFile walks up from dir looking for a .phpversion file.
+// Returns the version string and the path to the file that was found,
+// or empty strings if not found.
+func findPHPVersionFile(dir string) (version, filePath string) {
 	for {
 		candidate := filepath.Join(dir, ".phpversion")
 		data, err := os.ReadFile(candidate)
 		if err == nil {
 			ver := strings.TrimSpace(string(data))
 			if versionRe.MatchString(ver) {
-				return ver
+				return ver, candidate
 			}
 		}
 		parent := filepath.Dir(dir)
@@ -100,7 +108,7 @@ func findPHPVersion(dir string) string {
 		}
 		dir = parent
 	}
-	return ""
+	return "", ""
 }
 
 // resolveFromVersion returns the php.exe path for a given version like "8.5".
@@ -114,6 +122,30 @@ func resolveFromVersion(ver string) (string, error) {
 		return "", fmt.Errorf("php %s not found at %s", ver, php)
 	}
 	return php, nil
+}
+
+// resolveCurrentPHP determines the PHP executable and version for the given working directory.
+// It first checks for a .phpversion file (walking up the tree), then falls back to herd.phar which-php.
+func resolveCurrentPHP(cwd string) (phpPath, version string, err error) {
+	version = findPHPVersion(cwd)
+	if version != "" {
+		phpPath, err = resolveFromVersion(version)
+		if err != nil {
+			return "", "", err
+		}
+		return phpPath, version, nil
+	}
+	// Fallback: ask herd.phar which-php
+	bootstrap, err := mostRecentPHP()
+	if err != nil {
+		return "", "", err
+	}
+	phpPath, err = whichPHP(bootstrap, cwd)
+	if err != nil {
+		return "", "", err
+	}
+	version = extractVersion(phpPath)
+	return phpPath, version, nil
 }
 
 // mostRecentPHP finds the highest-versioned php.exe under Herd.
@@ -221,7 +253,7 @@ func parentProcessName() string {
 	if err != nil {
 		return ""
 	}
-	defer windows.CloseHandle(snap)
+	defer func() { _ = windows.CloseHandle(snap) }()
 
 	var entry windows.ProcessEntry32
 	entry.Size = uint32(unsafe.Sizeof(entry))
@@ -258,7 +290,7 @@ func isInteractive() bool {
 func confirmInstall() bool {
 	fmt.Print("Shepherd is not installed yet. Install now? [Y/n] ")
 	var answer string
-	fmt.Scanln(&answer)
+	_, _ = fmt.Scanln(&answer)
 	answer = strings.TrimSpace(strings.ToLower(answer))
 	return answer == "" || answer == "y" || answer == "yes"
 }
@@ -266,7 +298,7 @@ func confirmInstall() bool {
 func main() {
 	// Parse global flags (--verbose, --quiet, --json, --no-interactive) before anything else.
 	// These are stripped from os.Args so subcommands don't see them.
-	var cleanedArgs []string
+	cleanedArgs := make([]string, 0, len(os.Args))
 	for _, arg := range os.Args {
 		switch arg {
 		case "--verbose":
@@ -370,7 +402,7 @@ func main() {
 				}
 				if fromExplorer {
 					fmt.Println("\nPress Enter to close...")
-					fmt.Scanln()
+					_, _ = fmt.Scanln()
 				}
 				return
 			}
@@ -476,7 +508,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "PHP %s is not installed.\n", phpVersion)
 				fmt.Fprintf(os.Stderr, "Install it with Herd now? [Y/n] ")
 				var answer string
-				fmt.Scanln(&answer)
+				_, _ = fmt.Scanln(&answer)
 				answer = strings.TrimSpace(strings.ToLower(answer))
 				if answer == "" || answer == "y" || answer == "yes" {
 					if installErr := herdInstallPHP(phpVersion); installErr != nil {
@@ -585,26 +617,12 @@ func cmdWhich() {
 	sourceFile := ""
 
 	// Try .phpversion resolution
-	phpVersion = findPHPVersion(cwd)
+	phpVersion, sourceFile = findPHPVersionFile(cwd)
 	if phpVersion != "" {
 		phpPath, err = resolveFromVersion(phpVersion)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
-		}
-		// Find which .phpversion file was used (walk up)
-		dir := cwd
-		for {
-			candidate := filepath.Join(dir, ".phpversion")
-			if _, serr := os.Stat(candidate); serr == nil {
-				sourceFile = candidate
-				break
-			}
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
 		}
 		source = ".phpversion"
 	} else {
@@ -658,20 +676,10 @@ func cmdCurrent() {
 		os.Exit(1)
 	}
 
-	phpVersion := findPHPVersion(cwd)
-	if phpVersion == "" {
-		// Fallback to herd
-		bootstrap, berr := mostRecentPHP()
-		if berr != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", berr)
-			os.Exit(1)
-		}
-		phpPath, err := whichPHP(bootstrap, cwd)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		phpVersion = extractVersion(phpPath)
+	_, phpVersion, err := resolveCurrentPHP(cwd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 
 	if jsonOutput {
@@ -964,16 +972,17 @@ func cmdRun() {
 	extDir := filepath.Join(filepath.Dir(targetPHP), "ext")
 
 	var execArgs []string
-	if cmdName == "php" || cmdName == "php.exe" {
+	switch cmdName {
+	case "php", "php.exe":
 		// Direct PHP invocation: replace php with the resolved one
 		execArgs = []string{"-d", "extension_dir=" + extDir}
 		execArgs = append(execArgs, cmdArgs[1:]...)
-	} else if cmdName == "composer" || cmdName == "composer.exe" {
+	case "composer", "composer.exe":
 		// Composer invocation: run via PHP
 		composerPhar := filepath.Join(herdHome(), "composer.phar")
 		execArgs = []string{composerPhar}
 		execArgs = append(execArgs, cmdArgs[1:]...)
-	} else {
+	default:
 		// Any other command: just exec it directly, setting PATH so our resolved PHP is first
 		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
 		cmd.Stdin = os.Stdin

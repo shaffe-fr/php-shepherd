@@ -38,11 +38,11 @@ func TestXdebugStatus_Enabled(t *testing.T) {
 	xdebugStatus(lines, "8.4")
 	jsonOutput = oldJsonOutput
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	_, _ = buf.ReadFrom(r)
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
@@ -75,11 +75,11 @@ func TestXdebugStatus_Disabled(t *testing.T) {
 	xdebugStatus(lines, "8.4")
 	jsonOutput = oldJsonOutput
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	_, _ = buf.ReadFrom(r)
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
@@ -105,14 +105,14 @@ func TestXdebugStatus_NoXdebugLines(t *testing.T) {
 	xdebugStatus(lines, "8.4")
 	jsonOutput = oldJsonOutput
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	_, _ = buf.ReadFrom(r)
 
 	var result map[string]interface{}
-	json.Unmarshal(buf.Bytes(), &result)
+	_ = json.Unmarshal(buf.Bytes(), &result)
 	if result["enabled"] != false {
 		t.Error("expected enabled=false when no xdebug lines")
 	}
@@ -134,21 +134,21 @@ func TestDoctorCheckAliases(t *testing.T) {
 
 	t.Run("detects alias in bashrc", func(t *testing.T) {
 		bashrc := filepath.Join(root, ".bashrc")
-		os.WriteFile(bashrc, []byte("alias php='/usr/bin/php'\n"), 0644)
+		_ = os.WriteFile(bashrc, []byte("alias php='/usr/bin/php'\n"), 0644)
 
 		issues := doctorCheckAliases()
 		if issues != 1 {
 			t.Errorf("expected 1 issue, got %d", issues)
 		}
 
-		os.Remove(bashrc)
+		_ = os.Remove(bashrc)
 	})
 
 	t.Run("detects alias in PowerShell profile", func(t *testing.T) {
 		profileDir := filepath.Join(root, "Documents", "PowerShell")
-		os.MkdirAll(profileDir, 0755)
+		_ = os.MkdirAll(profileDir, 0755)
 		profile := filepath.Join(profileDir, "Microsoft.PowerShell_profile.ps1")
-		os.WriteFile(profile, []byte("Set-Alias composer C:\\composer.bat\n"), 0644)
+		_ = os.WriteFile(profile, []byte("Set-Alias composer C:\\composer.bat\n"), 0644)
 
 		issues := doctorCheckAliases()
 		if issues < 1 {

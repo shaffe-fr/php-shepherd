@@ -23,9 +23,9 @@ func downloadFile(rawURL string) (string, error) {
 
 	resp, err := httpClient.Get(rawURL)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("downloading %s: %w", rawURL, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // best-effort close on HTTP body
 
 	if resp.StatusCode != 200 {
 		return "", fmt.Errorf("HTTP %d for %s", resp.StatusCode, rawURL)
@@ -39,19 +39,19 @@ func downloadFile(rawURL string) (string, error) {
 
 	tmpFile, err := os.CreateTemp("", "shepherd-ext-*.zip")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("creating temp file for download: %w", err)
 	}
 
 	// Limit download size to prevent disk exhaustion.
 	limited := io.LimitReader(resp.Body, maxDownloadSize+1)
 	n, err := io.Copy(tmpFile, limited)
-	tmpFile.Close()
+	_ = tmpFile.Close()
 	if err != nil {
-		os.Remove(tmpFile.Name())
-		return "", err
+		_ = os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("writing download to disk: %w", err)
 	}
 	if n > maxDownloadSize {
-		os.Remove(tmpFile.Name())
+		_ = os.Remove(tmpFile.Name())
 		return "", fmt.Errorf("download exceeds maximum size (%d MB)", maxDownloadSize/(1024*1024))
 	}
 	return tmpFile.Name(), nil

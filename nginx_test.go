@@ -13,7 +13,7 @@ func TestNginxSyncAllowed(t *testing.T) {
 	t.Setenv("USERPROFILE", root)
 
 	// Ensure shepherd data dir exists
-	os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
+	_ = os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
 
 	t.Run("allowed when no lockfile", func(t *testing.T) {
 		if !nginxSyncAllowed("fresh-domain") {
@@ -31,12 +31,12 @@ func TestNginxSyncAllowed(t *testing.T) {
 	t.Run("allowed after cooldown expires", func(t *testing.T) {
 		domain := "old-domain"
 		lockPath := nginxSyncLockPath(domain)
-		os.MkdirAll(filepath.Dir(lockPath), 0755)
+		_ = os.MkdirAll(filepath.Dir(lockPath), 0755)
 		// Create lockfile with old mod time
 		f, _ := os.Create(lockPath)
-		f.Close()
+		_ = f.Close()
 		oldTime := time.Now().Add(-5 * time.Second)
-		os.Chtimes(lockPath, oldTime, oldTime)
+		_ = os.Chtimes(lockPath, oldTime, oldTime)
 
 		if !nginxSyncAllowed(domain) {
 			t.Error("expected true after cooldown")
@@ -47,7 +47,7 @@ func TestNginxSyncAllowed(t *testing.T) {
 func TestNginxSyncTouch(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("USERPROFILE", root)
-	os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
+	_ = os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
 
 	domain := "test-domain"
 	nginxSyncTouch(domain)
@@ -69,19 +69,19 @@ func TestFindNginxConfsForProject(t *testing.T) {
 	// Setup parked path with a project
 	sitesDir := filepath.Join(root, "Sites")
 	projectDir := filepath.Join(sitesDir, "my-app")
-	os.MkdirAll(projectDir, 0755)
+	_ = os.MkdirAll(projectDir, 0755)
 
 	// Create valet config
 	valetDir := filepath.Join(root, ".config", "herd", "config", "valet")
-	os.MkdirAll(valetDir, 0755)
+	_ = os.MkdirAll(valetDir, 0755)
 	config := `{"paths": ["` + filepath.ToSlash(sitesDir) + `"], "tld": "test"}`
-	os.WriteFile(filepath.Join(valetDir, "config.json"), []byte(config), 0644)
+	_ = os.WriteFile(filepath.Join(valetDir, "config.json"), []byte(config), 0644)
 
 	// Create nginx conf dir with a matching conf
 	nginxDir := filepath.Join(valetDir, "Nginx")
-	os.MkdirAll(nginxDir, 0755)
-	os.WriteFile(filepath.Join(nginxDir, "my-app.test.conf"), []byte("server {}"), 0644)
-	os.WriteFile(filepath.Join(nginxDir, "other.test.conf"), []byte("server {}"), 0644)
+	_ = os.MkdirAll(nginxDir, 0755)
+	_ = os.WriteFile(filepath.Join(nginxDir, "my-app.test.conf"), []byte("server {}"), 0644)
+	_ = os.WriteFile(filepath.Join(nginxDir, "other.test.conf"), []byte("server {}"), 0644)
 
 	t.Run("finds matching conf", func(t *testing.T) {
 		confs := findNginxConfsForProject(projectDir)
@@ -95,7 +95,7 @@ func TestFindNginxConfsForProject(t *testing.T) {
 
 	t.Run("returns empty for unknown project", func(t *testing.T) {
 		unknown := filepath.Join(root, "other-dir")
-		os.MkdirAll(unknown, 0755)
+		_ = os.MkdirAll(unknown, 0755)
 		confs := findNginxConfsForProject(unknown)
 		if len(confs) != 0 {
 			t.Errorf("expected empty, got %v", confs)
@@ -110,29 +110,29 @@ func TestSyncNginx(t *testing.T) {
 	// Setup parked path with a project
 	sitesDir := filepath.Join(root, "Sites")
 	projectDir := filepath.Join(sitesDir, "my-app")
-	os.MkdirAll(projectDir, 0755)
+	_ = os.MkdirAll(projectDir, 0755)
 
 	// Create valet config
 	valetDir := filepath.Join(root, ".config", "herd", "config", "valet")
-	os.MkdirAll(valetDir, 0755)
+	_ = os.MkdirAll(valetDir, 0755)
 	config := `{"paths": ["` + filepath.ToSlash(sitesDir) + `"], "tld": "test"}`
-	os.WriteFile(filepath.Join(valetDir, "config.json"), []byte(config), 0644)
+	_ = os.WriteFile(filepath.Join(valetDir, "config.json"), []byte(config), 0644)
 
 	// Create nginx conf
 	nginxDir := filepath.Join(valetDir, "Nginx")
-	os.MkdirAll(nginxDir, 0755)
+	_ = os.MkdirAll(nginxDir, 0755)
 	confContent := "# ISOLATED_PHP_VERSION=8.3\nfastcgi_pass \"$herd_sock_83\";\n"
 	confPath := filepath.Join(nginxDir, "my-app.test.conf")
-	os.WriteFile(confPath, []byte(confContent), 0644)
+	_ = os.WriteFile(confPath, []byte(confContent), 0644)
 
 	// Create herd bin dir (needed for syncNginx to find bootstrap php)
 	herdBin := filepath.Join(root, ".config", "herd", "bin")
-	os.MkdirAll(filepath.Join(herdBin, "php84"), 0755)
-	os.WriteFile(filepath.Join(herdBin, "php84", "php.exe"), []byte("fake"), 0755)
-	os.WriteFile(filepath.Join(herdBin, "herd.phar"), []byte("<?php"), 0644)
+	_ = os.MkdirAll(filepath.Join(herdBin, "php84"), 0755)
+	_ = os.WriteFile(filepath.Join(herdBin, "php84", "php.exe"), []byte("fake"), 0755)
+	_ = os.WriteFile(filepath.Join(herdBin, "herd.phar"), []byte("<?php"), 0644)
 
 	// Create shepherd data dir
-	os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
+	_ = os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
 
 	t.Run("updates nginx conf for project", func(t *testing.T) {
 		syncNginx(projectDir, "8.4")
@@ -149,7 +149,7 @@ func TestSyncNginx(t *testing.T) {
 
 	t.Run("no-op when project not in parked paths", func(t *testing.T) {
 		unknownDir := filepath.Join(root, "unknown-project")
-		os.MkdirAll(unknownDir, 0755)
+		_ = os.MkdirAll(unknownDir, 0755)
 		// Should not panic
 		syncNginx(unknownDir, "8.5")
 	})

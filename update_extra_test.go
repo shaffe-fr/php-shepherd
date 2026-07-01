@@ -17,15 +17,15 @@ func TestExtractBinaryFromZip(t *testing.T) {
 		f, _ := os.Create(zipPath)
 		w := zip.NewWriter(f)
 		entry, _ := w.Create("shp.exe")
-		entry.Write([]byte("fake binary content"))
-		w.Close()
-		f.Close()
+		_, _ = entry.Write([]byte("fake binary content"))
+		_ = w.Close()
+		_ = f.Close()
 
 		extracted, err := extractBinaryFromZip(zipPath, "shp.exe")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		defer os.Remove(extracted)
+		defer func() { _ = os.Remove(extracted) }()
 
 		data, _ := os.ReadFile(extracted)
 		if string(data) != "fake binary content" {
@@ -39,15 +39,15 @@ func TestExtractBinaryFromZip(t *testing.T) {
 		f, _ := os.Create(zipPath)
 		w := zip.NewWriter(f)
 		entry, _ := w.Create("SHP.EXE")
-		entry.Write([]byte("binary"))
-		w.Close()
-		f.Close()
+		_, _ = entry.Write([]byte("binary"))
+		_ = w.Close()
+		_ = f.Close()
 
 		extracted, err := extractBinaryFromZip(zipPath, "shp.exe")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		defer os.Remove(extracted)
+		defer func() { _ = os.Remove(extracted) }()
 
 		data, _ := os.ReadFile(extracted)
 		if string(data) != "binary" {
@@ -61,9 +61,9 @@ func TestExtractBinaryFromZip(t *testing.T) {
 		f, _ := os.Create(zipPath)
 		w := zip.NewWriter(f)
 		entry, _ := w.Create("other.exe")
-		entry.Write([]byte("not shp"))
-		w.Close()
-		f.Close()
+		_, _ = entry.Write([]byte("not shp"))
+		_ = w.Close()
+		_ = f.Close()
 
 		_, err := extractBinaryFromZip(zipPath, "shp.exe")
 		if err == nil {
@@ -77,15 +77,15 @@ func TestExtractBinaryFromZip(t *testing.T) {
 		f, _ := os.Create(zipPath)
 		w := zip.NewWriter(f)
 		entry, _ := w.Create("bin/shp.exe")
-		entry.Write([]byte("nested binary"))
-		w.Close()
-		f.Close()
+		_, _ = entry.Write([]byte("nested binary"))
+		_ = w.Close()
+		_ = f.Close()
 
 		extracted, err := extractBinaryFromZip(zipPath, "shp.exe")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		defer os.Remove(extracted)
+		defer func() { _ = os.Remove(extracted) }()
 
 		data, _ := os.ReadFile(extracted)
 		if string(data) != "nested binary" {
@@ -98,10 +98,10 @@ func TestReplaceBinary(t *testing.T) {
 	t.Run("replaces target with new binary", func(t *testing.T) {
 		dir := t.TempDir()
 		target := filepath.Join(dir, "shp.exe")
-		os.WriteFile(target, []byte("old"), 0755)
+		_ = os.WriteFile(target, []byte("old"), 0755)
 
 		newBin := filepath.Join(dir, "new.exe")
-		os.WriteFile(newBin, []byte("new version"), 0755)
+		_ = os.WriteFile(newBin, []byte("new version"), 0755)
 
 		if err := replaceBinary(target, newBin); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -117,7 +117,7 @@ func TestReplaceBinary(t *testing.T) {
 		dir := t.TempDir()
 		target := filepath.Join(dir, "nonexistent.exe")
 		newBin := filepath.Join(dir, "new.exe")
-		os.WriteFile(newBin, []byte("new"), 0755)
+		_ = os.WriteFile(newBin, []byte("new"), 0755)
 
 		err := replaceBinary(target, newBin)
 		if err == nil {
@@ -129,7 +129,7 @@ func TestReplaceBinary(t *testing.T) {
 func TestUpdateCheckCache(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("USERPROFILE", root)
-	os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
+	_ = os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
 
 	t.Run("read returns zero value when no cache", func(t *testing.T) {
 		cache := readUpdateCache()
@@ -155,7 +155,7 @@ func TestUpdateCheckCache(t *testing.T) {
 	})
 
 	t.Run("read handles corrupt file", func(t *testing.T) {
-		os.WriteFile(updateCheckCachePath(), []byte("not json"), 0644)
+		_ = os.WriteFile(updateCheckCachePath(), []byte("not json"), 0644)
 		cache := readUpdateCache()
 		if cache.LatestVersion != "" {
 			t.Errorf("expected zero value for corrupt cache, got %+v", cache)
@@ -166,7 +166,7 @@ func TestUpdateCheckCache(t *testing.T) {
 func TestMaybeNotifyUpdate(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("USERPROFILE", root)
-	os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
+	_ = os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
 
 	t.Run("no notification without cache", func(t *testing.T) {
 		got := maybeNotifyUpdate()
@@ -213,7 +213,7 @@ func TestMaybeNotifyUpdate(t *testing.T) {
 
 		got := maybeNotifyUpdate()
 
-		w.Close()
+		_ = w.Close()
 		os.Stderr = oldStderr
 
 		if !got {
@@ -225,7 +225,7 @@ func TestMaybeNotifyUpdate(t *testing.T) {
 func TestTriggerUpdateCheckIfStale(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("USERPROFILE", root)
-	os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
+	_ = os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
 
 	t.Run("does not panic with no cache", func(t *testing.T) {
 		// Just verify it doesn't crash — it spawns a goroutine
@@ -276,9 +276,9 @@ func TestIsInstalled(t *testing.T) {
 
 	t.Run("true when all shims present", func(t *testing.T) {
 		dir := filepath.Join(root, ".config", "shepherd", "bin")
-		os.MkdirAll(dir, 0755)
+		_ = os.MkdirAll(dir, 0755)
 		for _, name := range []string{"php.exe", "composer.exe", "shp.exe"} {
-			os.WriteFile(filepath.Join(dir, name), []byte("fake"), 0755)
+			_ = os.WriteFile(filepath.Join(dir, name), []byte("fake"), 0755)
 		}
 		if !isInstalled() {
 			t.Error("expected true when all shims exist")
@@ -287,7 +287,7 @@ func TestIsInstalled(t *testing.T) {
 
 	t.Run("false when one shim missing", func(t *testing.T) {
 		dir := filepath.Join(root, ".config", "shepherd", "bin")
-		os.Remove(filepath.Join(dir, "composer.exe"))
+		_ = os.Remove(filepath.Join(dir, "composer.exe"))
 		if isInstalled() {
 			t.Error("expected false when composer.exe is missing")
 		}
@@ -441,8 +441,8 @@ func TestProfileOverridesPath(t *testing.T) {
 
 	t.Run("false when profile doesn't mention herd", func(t *testing.T) {
 		profileDir := filepath.Join(root, "Documents", "PowerShell")
-		os.MkdirAll(profileDir, 0755)
-		os.WriteFile(filepath.Join(profileDir, "Microsoft.PowerShell_profile.ps1"),
+		_ = os.MkdirAll(profileDir, 0755)
+		_ = os.WriteFile(filepath.Join(profileDir, "Microsoft.PowerShell_profile.ps1"),
 			[]byte("Write-Host 'Hello'\n"), 0644)
 
 		if profileOverridesPath() {
@@ -452,9 +452,9 @@ func TestProfileOverridesPath(t *testing.T) {
 
 	t.Run("true when profile mentions herd and PATH", func(t *testing.T) {
 		profileDir := filepath.Join(root, "Documents", "PowerShell")
-		os.MkdirAll(profileDir, 0755)
+		_ = os.MkdirAll(profileDir, 0755)
 		content := "$env:PATH = \"C:\\herd\\bin;\" + $env:PATH\n"
-		os.WriteFile(filepath.Join(profileDir, "Microsoft.PowerShell_profile.ps1"),
+		_ = os.WriteFile(filepath.Join(profileDir, "Microsoft.PowerShell_profile.ps1"),
 			[]byte(content), 0644)
 
 		if !profileOverridesPath() {
@@ -464,9 +464,9 @@ func TestProfileOverridesPath(t *testing.T) {
 
 	t.Run("false when profile mentions both herd and shepherd", func(t *testing.T) {
 		profileDir := filepath.Join(root, "Documents", "PowerShell")
-		os.MkdirAll(profileDir, 0755)
+		_ = os.MkdirAll(profileDir, 0755)
 		content := "# shepherd integration\n$env:PATH = \"C:\\herd\\bin;\" + $env:PATH\n"
-		os.WriteFile(filepath.Join(profileDir, "Microsoft.PowerShell_profile.ps1"),
+		_ = os.WriteFile(filepath.Join(profileDir, "Microsoft.PowerShell_profile.ps1"),
 			[]byte(content), 0644)
 
 		if profileOverridesPath() {
@@ -480,7 +480,7 @@ func TestPatchPowerShellProfile(t *testing.T) {
 	t.Setenv("USERPROFILE", root)
 
 	// Create shepherd data dir
-	os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
+	_ = os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
 
 	t.Run("does nothing when no profile exists", func(t *testing.T) {
 		got := patchPowerShellProfile(shimDir())
@@ -491,9 +491,9 @@ func TestPatchPowerShellProfile(t *testing.T) {
 
 	t.Run("patches existing profile", func(t *testing.T) {
 		profileDir := filepath.Join(root, "Documents", "PowerShell")
-		os.MkdirAll(profileDir, 0755)
+		_ = os.MkdirAll(profileDir, 0755)
 		profilePath := filepath.Join(profileDir, "Microsoft.PowerShell_profile.ps1")
-		os.WriteFile(profilePath, []byte("# my profile\n"), 0644)
+		_ = os.WriteFile(profilePath, []byte("# my profile\n"), 0644)
 
 		got := patchPowerShellProfile(shimDir())
 		if !got {
@@ -532,20 +532,20 @@ func TestUnpatchPowerShellProfile(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("USERPROFILE", root)
 
-	os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
+	_ = os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
 
 	profileDir := filepath.Join(root, "Documents", "PowerShell")
-	os.MkdirAll(profileDir, 0755)
+	_ = os.MkdirAll(profileDir, 0755)
 	profilePath := filepath.Join(profileDir, "Microsoft.PowerShell_profile.ps1")
 
 	// Write a profile with the shepherd snippet
 	content := "# my stuff\n# Shepherd PATH priority\n" + profileSourceLine + "\n"
-	os.WriteFile(profilePath, []byte(content), 0644)
+	_ = os.WriteFile(profilePath, []byte(content), 0644)
 
 	// Write the snippet file
 	snippetPath := shepherdProfilePath()
-	os.MkdirAll(filepath.Dir(snippetPath), 0755)
-	os.WriteFile(snippetPath, []byte(shepherdProfileContent()), 0644)
+	_ = os.MkdirAll(filepath.Dir(snippetPath), 0755)
+	_ = os.WriteFile(snippetPath, []byte(shepherdProfileContent()), 0644)
 
 	unpatchPowerShellProfile()
 

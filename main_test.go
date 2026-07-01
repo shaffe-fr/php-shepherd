@@ -73,19 +73,19 @@ func TestRewriteXdebugArgs(t *testing.T) {
 	xdebugDir := filepath.Join(os.Getenv("PROGRAMFILES"), "Herd", "resources", "app.asar.unpacked", "resources", "bin", "xdebug")
 	createdDir := false
 	if _, err := os.Stat(xdebugDir); os.IsNotExist(err) {
-		os.MkdirAll(xdebugDir, 0755)
+		_ = os.MkdirAll(xdebugDir, 0755)
 		createdDir = true
 	}
 	// Create dummy DLLs for versions we'll reference in tests
 	for _, v := range []string{"8.3", "8.4"} {
 		dllPath := filepath.Join(xdebugDir, "xdebug-"+v+".dll")
 		if _, err := os.Stat(dllPath); os.IsNotExist(err) {
-			os.WriteFile(dllPath, []byte("fake"), 0644)
-			defer os.Remove(dllPath)
+			_ = os.WriteFile(dllPath, []byte("fake"), 0644)
+			defer func() { _ = os.Remove(dllPath) }()
 		}
 	}
 	if createdDir {
-		defer os.RemoveAll(filepath.Join(os.Getenv("PROGRAMFILES"), "Herd", "resources", "app.asar.unpacked", "resources", "bin", "xdebug"))
+		defer func() { _ = os.RemoveAll(filepath.Join(os.Getenv("PROGRAMFILES"), "Herd", "resources", "app.asar.unpacked", "resources", "bin", "xdebug")) }()
 	}
 
 	tests := []struct {
@@ -176,10 +176,10 @@ func TestFindPHPVersion(t *testing.T) {
 	// Create a temp directory structure with a .phpversion file
 	root := t.TempDir()
 	sub := filepath.Join(root, "project", "src")
-	os.MkdirAll(sub, 0755)
+	_ = os.MkdirAll(sub, 0755)
 
 	// Write .phpversion at project level
-	os.WriteFile(filepath.Join(root, "project", ".phpversion"), []byte("8.4\n"), 0644)
+	_ = os.WriteFile(filepath.Join(root, "project", ".phpversion"), []byte("8.4\n"), 0644)
 
 	tests := []struct {
 		name string
@@ -231,7 +231,7 @@ func TestFindPHPVersionInvalidContent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			os.WriteFile(filepath.Join(dir, ".phpversion"), []byte(tt.content), 0644)
+			_ = os.WriteFile(filepath.Join(dir, ".phpversion"), []byte(tt.content), 0644)
 			got := findPHPVersion(dir)
 			if got != tt.want {
 				t.Errorf("findPHPVersion with content %q = %q, want %q", tt.content, got, tt.want)
@@ -380,7 +380,7 @@ func TestUpdateNginxConf(t *testing.T) {
 			// Write content to a temp file
 			dir := t.TempDir()
 			confPath := filepath.Join(dir, "test.conf")
-			os.WriteFile(confPath, []byte(tt.content), 0644)
+			_ = os.WriteFile(confPath, []byte(tt.content), 0644)
 
 			got := updateNginxConf(confPath, tt.version)
 			if got != tt.changed {

@@ -27,7 +27,7 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	os.Remove(bin)
+	_ = os.Remove(bin)
 	os.Exit(code)
 }
 
@@ -97,39 +97,57 @@ func fakeHerd(t *testing.T, versions []string) string {
 
 	root := t.TempDir()
 	herdBin := filepath.Join(root, ".config", "herd", "bin")
-	os.MkdirAll(herdBin, 0755)
+	if err := os.MkdirAll(herdBin, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create fake php.exe for each version
 	for _, ver := range versions {
 		nodot := strings.ReplaceAll(ver, ".", "")
 		phpDir := filepath.Join(herdBin, "php"+nodot)
-		os.MkdirAll(phpDir, 0755)
+		if err := os.MkdirAll(phpDir, 0755); err != nil {
+			t.Fatal(err)
+		}
 		// Create a tiny executable that just exits 0.
 		// On Windows we need a valid PE, so we copy cmd.exe as a stand-in.
 		// This is only needed to pass os.Stat checks — we won't actually run PHP.
 		phpExe := filepath.Join(phpDir, "php.exe")
-		os.WriteFile(phpExe, []byte("fake"), 0755)
+		if err := os.WriteFile(phpExe, []byte("fake"), 0755); err != nil {
+			t.Fatal(err)
+		}
 
 		// Create a php.ini alongside it
 		iniPath := filepath.Join(phpDir, "php.ini")
-		os.WriteFile(iniPath, []byte("[PHP]\n"), 0644)
+		if err := os.WriteFile(iniPath, []byte("[PHP]\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		// Create ext dir
-		os.MkdirAll(filepath.Join(phpDir, "ext"), 0755)
+		if err := os.MkdirAll(filepath.Join(phpDir, "ext"), 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// Create a fake herd.phar
-	os.WriteFile(filepath.Join(herdBin, "herd.phar"), []byte("<?php // fake"), 0644)
+	if err := os.WriteFile(filepath.Join(herdBin, "herd.phar"), []byte("<?php // fake"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create valet config with empty paths
 	valetDir := filepath.Join(root, ".config", "herd", "config", "valet")
-	os.MkdirAll(valetDir, 0755)
+	if err := os.MkdirAll(valetDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 	config := map[string]interface{}{"paths": []string{}, "tld": "test"}
 	data, _ := json.Marshal(config)
-	os.WriteFile(filepath.Join(valetDir, "config.json"), data, 0644)
+	if err := os.WriteFile(filepath.Join(valetDir, "config.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create shepherd data dir
-	os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755)
+	if err := os.MkdirAll(filepath.Join(root, ".config", "shepherd"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	return root
 }
@@ -215,7 +233,7 @@ func TestCmdList(t *testing.T) {
 	t.Run("marks active version", func(t *testing.T) {
 		// Create .phpversion in a temp working dir
 		workDir := t.TempDir()
-		os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.4\n"), 0644)
+		_ = os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.4\n"), 0644)
 
 		cmd := exec.Command(testBinary, "list")
 		cmd.Dir = workDir
@@ -373,7 +391,7 @@ func TestCmdCurrent(t *testing.T) {
 
 	t.Run("prints version from phpversion file", func(t *testing.T) {
 		workDir := t.TempDir()
-		os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.4\n"), 0644)
+		_ = os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.4\n"), 0644)
 
 		cmd := exec.Command(testBinary, "current")
 		cmd.Dir = workDir
@@ -396,7 +414,7 @@ func TestCmdCurrent(t *testing.T) {
 
 	t.Run("json output", func(t *testing.T) {
 		workDir := t.TempDir()
-		os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.5\n"), 0644)
+		_ = os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.5\n"), 0644)
 
 		cmd := exec.Command(testBinary, "--json", "current")
 		cmd.Dir = workDir
@@ -426,7 +444,7 @@ func TestCmdWhich(t *testing.T) {
 
 	t.Run("shows phpversion source", func(t *testing.T) {
 		workDir := t.TempDir()
-		os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.4\n"), 0644)
+		_ = os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.4\n"), 0644)
 
 		cmd := exec.Command(testBinary, "which")
 		cmd.Dir = workDir
@@ -452,7 +470,7 @@ func TestCmdWhich(t *testing.T) {
 
 	t.Run("json output", func(t *testing.T) {
 		workDir := t.TempDir()
-		os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.5\n"), 0644)
+		_ = os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.5\n"), 0644)
 
 		cmd := exec.Command(testBinary, "--json", "which")
 		cmd.Dir = workDir
@@ -488,7 +506,7 @@ func TestCmdXdebugStatus(t *testing.T) {
 
 	t.Run("shows disabled when not configured", func(t *testing.T) {
 		workDir := t.TempDir()
-		os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.4\n"), 0644)
+		_ = os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.4\n"), 0644)
 
 		cmd := exec.Command(testBinary, "xdebug", "status")
 		cmd.Dir = workDir
@@ -510,12 +528,12 @@ func TestCmdXdebugStatus(t *testing.T) {
 
 	t.Run("shows enabled with mode", func(t *testing.T) {
 		workDir := t.TempDir()
-		os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.4\n"), 0644)
+		_ = os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.4\n"), 0644)
 
 		// Write a php.ini with xdebug enabled
 		phpDir := filepath.Join(profile, ".config", "herd", "bin", "php84")
 		iniContent := "[PHP]\nzend_extension=xdebug.dll\nxdebug.mode=coverage\n"
-		os.WriteFile(filepath.Join(phpDir, "php.ini"), []byte(iniContent), 0644)
+		_ = os.WriteFile(filepath.Join(phpDir, "php.ini"), []byte(iniContent), 0644)
 
 		cmd := exec.Command(testBinary, "xdebug", "status")
 		cmd.Dir = workDir
@@ -541,11 +559,11 @@ func TestCmdXdebugStatus(t *testing.T) {
 
 	t.Run("json output", func(t *testing.T) {
 		workDir := t.TempDir()
-		os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.4\n"), 0644)
+		_ = os.WriteFile(filepath.Join(workDir, ".phpversion"), []byte("8.4\n"), 0644)
 
 		// Ensure php.ini is clean for this test
 		phpDir := filepath.Join(profile, ".config", "herd", "bin", "php84")
-		os.WriteFile(filepath.Join(phpDir, "php.ini"), []byte("[PHP]\n"), 0644)
+		_ = os.WriteFile(filepath.Join(phpDir, "php.ini"), []byte("[PHP]\n"), 0644)
 
 		cmd := exec.Command(testBinary, "--json", "xdebug", "status")
 		cmd.Dir = workDir
@@ -579,9 +597,9 @@ func TestCmdHelp(t *testing.T) {
 
 	// Ensure shims exist so help is shown (not install prompt)
 	shimBin := filepath.Join(profile, ".config", "shepherd", "bin")
-	os.MkdirAll(shimBin, 0755)
+	_ = os.MkdirAll(shimBin, 0755)
 	for _, name := range []string{"php.exe", "composer.exe", "shp.exe"} {
-		os.WriteFile(filepath.Join(shimBin, name), []byte("fake"), 0755)
+		_ = os.WriteFile(filepath.Join(shimBin, name), []byte("fake"), 0755)
 	}
 
 	t.Run("no args shows help text", func(t *testing.T) {

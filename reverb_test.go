@@ -9,7 +9,7 @@ import (
 func TestIsLaravelProject(t *testing.T) {
 	t.Run("true with artisan file", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "artisan"), []byte("<?php // artisan"), 0644)
+		_ = os.WriteFile(filepath.Join(dir, "artisan"), []byte("<?php // artisan"), 0644)
 
 		if !isLaravelProject(dir) {
 			t.Error("expected true when artisan exists")
@@ -19,7 +19,7 @@ func TestIsLaravelProject(t *testing.T) {
 	t.Run("true with laravel/framework in composer.json", func(t *testing.T) {
 		dir := t.TempDir()
 		composer := `{"require": {"laravel/framework": "^11.0"}}`
-		os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composer), 0644)
+		_ = os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composer), 0644)
 
 		if !isLaravelProject(dir) {
 			t.Error("expected true when laravel/framework in composer.json")
@@ -36,7 +36,7 @@ func TestIsLaravelProject(t *testing.T) {
 	t.Run("false with composer.json without laravel", func(t *testing.T) {
 		dir := t.TempDir()
 		composer := `{"require": {"symfony/console": "^6.0"}}`
-		os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composer), 0644)
+		_ = os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composer), 0644)
 
 		if isLaravelProject(dir) {
 			t.Error("expected false without laravel/framework")
@@ -48,7 +48,7 @@ func TestRequiresReverb(t *testing.T) {
 	t.Run("true when laravel/reverb in require", func(t *testing.T) {
 		dir := t.TempDir()
 		composer := `{"require": {"laravel/reverb": "^1.0"}}`
-		os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composer), 0644)
+		_ = os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composer), 0644)
 
 		if !requiresReverb(dir) {
 			t.Error("expected true when laravel/reverb is required")
@@ -65,7 +65,7 @@ func TestRequiresReverb(t *testing.T) {
 	t.Run("false when reverb not in composer.json", func(t *testing.T) {
 		dir := t.TempDir()
 		composer := `{"require": {"laravel/framework": "^11.0"}}`
-		os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composer), 0644)
+		_ = os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composer), 0644)
 
 		if requiresReverb(dir) {
 			t.Error("expected false when laravel/reverb not present")

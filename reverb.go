@@ -208,6 +208,6 @@ func checkPort(host, port string) bool {
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	conn.Close() //nolint:errcheck // connection test, close is best-effort
 	return true
 }

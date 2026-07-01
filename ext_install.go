@@ -226,7 +226,7 @@ func cmdExtInstall() {
 		fmt.Fprintf(os.Stderr, "  https://pecl.php.net/package/%s/%s/windows\n", extName, extVersion)
 		os.Exit(1)
 	}
-	defer os.Remove(zipPath)
+	defer func() { _ = os.Remove(zipPath) }()
 
 	fmt.Println("Download OK.")
 
@@ -257,7 +257,7 @@ func cmdExtInstall() {
 			fmt.Fprintf(os.Stderr, "Warning: failed to download dependencies: %v\n", err)
 			fmt.Fprintf(os.Stderr, "  You may need to install support libraries manually.\n")
 		} else {
-			defer os.Remove(depsZipPath)
+			defer func() { _ = os.Remove(depsZipPath) }()
 			if _, err := installExtFiles(depsZipPath, extName, phpDir, extDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to install dependencies: %v\n", err)
 			} else {
@@ -341,7 +341,7 @@ func installExtForVersion(extDef *extDefinition, extName, extVersion, phpVersion
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
-	defer os.Remove(zipPath)
+	defer func() { _ = os.Remove(zipPath) }()
 
 	// Extract and install
 	extDir := filepath.Join(phpDir, "ext")
@@ -366,7 +366,7 @@ func installExtForVersion(extDef *extDefinition, extName, extVersion, phpVersion
 		if err != nil {
 			fmt.Printf("  Warning: failed to download dependencies: %v\n", err)
 		} else {
-			defer os.Remove(depsZipPath)
+			defer func() { _ = os.Remove(depsZipPath) }()
 			if _, err := installExtFiles(depsZipPath, extName, phpDir, extDir); err != nil {
 				fmt.Printf("  Warning: failed to install dependencies: %v\n", err)
 			}
@@ -402,7 +402,7 @@ func detectPeclVersion(extName string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("cannot reach pecl.php.net: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // best-effort close on HTTP body
 
 	if resp.StatusCode != 200 {
 		return "", fmt.Errorf("extension %q not found on pecl.php.net (HTTP %d)", extName, resp.StatusCode)
@@ -431,7 +431,7 @@ func installExtFiles(zipPath, extName, phpDir, extDir string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer r.Close()
+	defer r.Close() //nolint:errcheck // zip reader close
 
 	extDLLPattern := regexp.MustCompile(`(?i)^php_` + regexp.QuoteMeta(extName) + `\.(dll|pdb)$`)
 	foundExtDLL := false
@@ -485,18 +485,20 @@ func installExtFiles(zipPath, extName, phpDir, extDir string) (bool, error) {
 func extractZipFile(f *zip.File, destPath string) error {
 	rc, err := f.Open()
 	if err != nil {
-		return err
+		return fmt.Errorf("opening zip entry %s: %w", f.Name, err)
 	}
-	defer rc.Close()
+	defer rc.Close() //nolint:errcheck // zip entry close
 
 	out, err := os.Create(destPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating %s: %w", destPath, err)
 	}
-	defer out.Close()
+	defer out.Close() //nolint:errcheck // file close after write
 
-	_, err = io.Copy(out, rc)
-	return err
+	if _, err = io.Copy(out, rc); err != nil {
+		return fmt.Errorf("extracting %s: %w", f.Name, err)
+	}
+	return nil
 }
 
 // verifyExtension runs php -m and checks if the extension is loaded.
@@ -716,7 +718,7 @@ func removeExtForVersion(extName, phpVersion string) {
 
 	pdbPath := filepath.Join(extDir, pdbName)
 	if _, err := os.Stat(pdbPath); err == nil {
-		os.Remove(pdbPath)
+		_ = os.Remove(pdbPath)
 	}
 
 	// Remove from php.ini

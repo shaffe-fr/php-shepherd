@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -35,10 +36,7 @@ func ensureIniValue(lines []string, anchorIdx int, key, value string) []string {
 	// Not found — insert after anchor
 	insert := key + "=" + value
 	after := anchorIdx + 1
-	lines = append(lines, "")
-	copy(lines[after+1:], lines[after:])
-	lines[after] = insert
-	return lines
+	return slices.Insert(lines, after, insert)
 }
 
 // writeIni writes lines back to the php.ini file.

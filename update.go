@@ -67,7 +67,7 @@ func readUpdateCache() updateCheckCache {
 
 // writeUpdateCache persists the update check result to disk.
 func writeUpdateCache(cache updateCheckCache) {
-	os.MkdirAll(filepath.Dir(updateCheckCachePath()), 0755)
+	_ = os.MkdirAll(filepath.Dir(updateCheckCachePath()), 0755)
 	data, err := json.Marshal(cache)
 	if err != nil {
 		return
@@ -91,7 +91,7 @@ func backgroundUpdateCheck() {
 	if err != nil {
 		return
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // background goroutine, best-effort
 
 	if resp.StatusCode != 200 {
 		return
@@ -185,7 +185,7 @@ func cmdSelfUpdate() {
 		fmt.Fprintf(os.Stderr, "Error contacting GitHub: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // HTTP body close
 
 	if resp.StatusCode != 200 {
 		fmt.Fprintf(os.Stderr, "Error: GitHub API returned HTTP %d\n", resp.StatusCode)
@@ -251,7 +251,7 @@ func cmdSelfUpdate() {
 		fmt.Fprintf(os.Stderr, "Error downloading update: %v\n", err)
 		os.Exit(1)
 	}
-	defer os.Remove(zipPath)
+	defer func() { _ = os.Remove(zipPath) }()
 
 	// Verify checksum (mandatory — goreleaser always produces checksums.txt).
 	if checksumURL == "" {
@@ -278,7 +278,7 @@ func cmdSelfUpdate() {
 		fmt.Fprintf(os.Stderr, "Error extracting update: %v\n", err)
 		os.Exit(1)
 	}
-	defer os.Remove(newBinary)
+	defer func() { _ = os.Remove(newBinary) }()
 
 	// Replace the current executable and all shims
 	self, err := os.Executable()
@@ -307,7 +307,7 @@ func cmdSelfUpdate() {
 				if err := replaceBinary(shimPath, newCopy); err == nil {
 					fmt.Printf("  ✓ Updated %s\n", shimPath)
 				}
-				os.Remove(newCopy)
+				_ = os.Remove(newCopy)
 			}
 		}
 	}
@@ -344,7 +344,7 @@ func verifyChecksum(filePath, fileName, checksumURL string) error {
 	if err != nil {
 		return fmt.Errorf("cannot download checksums: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // HTTP body close
 
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("checksums.txt returned HTTP %d", resp.StatusCode)
@@ -380,7 +380,7 @@ func verifyChecksum(filePath, fileName, checksumURL string) error {
 	if err != nil {
 		return fmt.Errorf("cannot open file for checksum: %w", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // file close after read
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
@@ -404,7 +404,7 @@ func extractBinaryFromZip(zipPath, fileName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer r.Close()
+	defer r.Close() //nolint:errcheck // zip reader close
 
 	for _, f := range r.File {
 		if strings.EqualFold(filepath.Base(f.Name), fileName) {
@@ -416,7 +416,7 @@ func extractBinaryFromZip(zipPath, fileName string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			defer rc.Close()
+			defer rc.Close() //nolint:errcheck // zip entry close
 
 			tmpFile, err := os.CreateTemp("", "shepherd-update-*.exe")
 			if err != nil {
@@ -426,16 +426,16 @@ func extractBinaryFromZip(zipPath, fileName string) (string, error) {
 			limited := io.LimitReader(rc, maxBinarySize+1)
 			n, err := io.Copy(tmpFile, limited)
 			if err != nil {
-				tmpFile.Close()
-				os.Remove(tmpFile.Name())
+				_ = tmpFile.Close()
+				_ = os.Remove(tmpFile.Name())
 				return "", err
 			}
 			if n > maxBinarySize {
-				tmpFile.Close()
-				os.Remove(tmpFile.Name())
+				_ = tmpFile.Close()
+				_ = os.Remove(tmpFile.Name())
 				return "", fmt.Errorf("%s exceeds maximum allowed size (%d MB)", fileName, maxBinarySize/(1024*1024))
 			}
-			tmpFile.Close()
+			_ = tmpFile.Close()
 			return tmpFile.Name(), nil
 		}
 	}
@@ -448,7 +448,7 @@ func replaceBinary(target, newBinary string) error {
 	oldPath := target + ".old"
 
 	// Remove any previous .old file
-	os.Remove(oldPath)
+	_ = os.Remove(oldPath)
 
 	// Rename current binary to .old
 	if err := os.Rename(target, oldPath); err != nil {
@@ -460,36 +460,36 @@ func replaceBinary(target, newBinary string) error {
 	tmpFile, err := osCreateTemp(dir, "shp-update-*.exe")
 	if err != nil {
 		// Rollback
-		os.Rename(oldPath, target)
+		_ = os.Rename(oldPath, target)
 		return fmt.Errorf("cannot create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 
 	data, err := os.ReadFile(newBinary)
 	if err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		os.Rename(oldPath, target)
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		_ = os.Rename(oldPath, target)
 		return fmt.Errorf("cannot read new binary: %w", err)
 	}
 
 	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		os.Rename(oldPath, target)
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		_ = os.Rename(oldPath, target)
 		return fmt.Errorf("cannot write temp binary: %w", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	// Atomic rename from temp to target (same volume = atomic on NTFS)
 	if err := osRenameFunc(tmpPath, target); err != nil {
-		os.Remove(tmpPath)
-		os.Rename(oldPath, target)
+		_ = os.Remove(tmpPath)
+		_ = os.Rename(oldPath, target)
 		return fmt.Errorf("cannot rename temp to target: %w", err)
 	}
 
 	// Clean up old binary (best effort, may fail if still running)
-	os.Remove(oldPath)
+	_ = os.Remove(oldPath)
 	return nil
 }
 

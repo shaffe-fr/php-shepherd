@@ -54,7 +54,8 @@ func rewriteXdebugArgs(args []string, version string) []string {
 		}
 		// Only rewrite args that actually reference the xdebug directory
 		// (e.g. -d zend_extension=C:\...\xdebug\xdebug-8.3.dll)
-		if strings.Contains(strings.ToLower(arg), xdebugDirLower) || strings.Contains(strings.ToLower(arg), "xdebug") && strings.Contains(arg, "zend_extension") {
+		if strings.Contains(strings.ToLower(arg), xdebugDirLower) ||
+			(strings.Contains(strings.ToLower(arg), "xdebug") && strings.Contains(arg, "zend_extension")) {
 			for _, dll := range dlls {
 				dllName := filepath.Base(dll)
 				arg = strings.ReplaceAll(arg, dllName, "xdebug-"+version+".dll")
@@ -108,29 +109,12 @@ func cmdXdebug() {
 		os.Exit(1)
 	}
 
-	version := findPHPVersion(cwd)
-	var phpDir string
-	if version != "" {
-		phpExe, err := resolveFromVersion(version)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		phpDir = filepath.Dir(phpExe)
-	} else {
-		bootstrap, err := mostRecentPHP()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		resolved, err := whichPHP(bootstrap, cwd)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		version = extractVersion(resolved)
-		phpDir = filepath.Dir(resolved)
+	phpPath, version, err := resolveCurrentPHP(cwd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
+	phpDir := filepath.Dir(phpPath)
 
 	if version == "" {
 		fmt.Fprintf(os.Stderr, "Error: could not determine PHP version\n")
@@ -301,29 +285,12 @@ func cmdXdebugShowStatus() {
 		os.Exit(1)
 	}
 
-	version := findPHPVersion(cwd)
-	var phpDir string
-	if version != "" {
-		phpExe, err := resolveFromVersion(version)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		phpDir = filepath.Dir(phpExe)
-	} else {
-		bootstrap, err := mostRecentPHP()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		resolved, err := whichPHP(bootstrap, cwd)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		version = extractVersion(resolved)
-		phpDir = filepath.Dir(resolved)
+	phpPath, version, err := resolveCurrentPHP(cwd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
+	phpDir := filepath.Dir(phpPath)
 
 	if version == "" {
 		fmt.Fprintf(os.Stderr, "Error: could not determine PHP version\n")

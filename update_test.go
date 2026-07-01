@@ -16,7 +16,7 @@ func TestVerifyChecksum_Valid(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "test.zip")
 	content := []byte("hello shepherd")
-	os.WriteFile(filePath, content, 0644)
+	_ = os.WriteFile(filePath, content, 0644)
 
 	// Compute expected SHA256
 	h := sha256.Sum256(content)
@@ -25,7 +25,7 @@ func TestVerifyChecksum_Valid(t *testing.T) {
 	// Serve checksums.txt
 	checksumBody := fmt.Sprintf("%s  test.zip\n%s  other.zip\n", expectedHash, "0000000000000000000000000000000000000000000000000000000000000000")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(checksumBody))
+		_, _ = w.Write([]byte(checksumBody))
 	}))
 	defer srv.Close()
 
@@ -38,13 +38,13 @@ func TestVerifyChecksum_Valid(t *testing.T) {
 func TestVerifyChecksum_Mismatch(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "test.zip")
-	os.WriteFile(filePath, []byte("actual content"), 0644)
+	_ = os.WriteFile(filePath, []byte("actual content"), 0644)
 
 	// Serve a checksum that doesn't match
 	fakeHash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	checksumBody := fmt.Sprintf("%s  test.zip\n", fakeHash)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(checksumBody))
+		_, _ = w.Write([]byte(checksumBody))
 	}))
 	defer srv.Close()
 
@@ -60,11 +60,11 @@ func TestVerifyChecksum_Mismatch(t *testing.T) {
 func TestVerifyChecksum_FileNotInChecksums(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "test.zip")
-	os.WriteFile(filePath, []byte("content"), 0644)
+	_ = os.WriteFile(filePath, []byte("content"), 0644)
 
 	checksumBody := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  other.zip\n"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(checksumBody))
+		_, _ = w.Write([]byte(checksumBody))
 	}))
 	defer srv.Close()
 
@@ -80,7 +80,7 @@ func TestVerifyChecksum_FileNotInChecksums(t *testing.T) {
 func TestVerifyChecksum_ServerError(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "test.zip")
-	os.WriteFile(filePath, []byte("content"), 0644)
+	_ = os.WriteFile(filePath, []byte("content"), 0644)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
@@ -97,7 +97,7 @@ func TestVerifyChecksum_CaseInsensitiveFilename(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "Test.zip")
 	content := []byte("case test")
-	os.WriteFile(filePath, content, 0644)
+	_ = os.WriteFile(filePath, content, 0644)
 
 	h := sha256.Sum256(content)
 	expectedHash := hex.EncodeToString(h[:])
@@ -105,7 +105,7 @@ func TestVerifyChecksum_CaseInsensitiveFilename(t *testing.T) {
 	// checksums.txt has lowercase filename
 	checksumBody := fmt.Sprintf("%s  test.zip\n", expectedHash)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(checksumBody))
+		_, _ = w.Write([]byte(checksumBody))
 	}))
 	defer srv.Close()
 
@@ -136,7 +136,7 @@ func TestDetectPeclVersion_Valid(t *testing.T) {
 			<a href="/package/redis/6.1.0">6.1.0</a>
 			<a href="/package/redis/6.0.2">6.0.2</a>
 		</body></html>`
-		w.Write([]byte(html))
+		_, _ = w.Write([]byte(html))
 	}))
 	defer srv.Close()
 
@@ -184,7 +184,7 @@ func TestDetectPeclVersion_NotFound(t *testing.T) {
 
 func TestDetectPeclVersion_NoVersionInPage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("<html><body>no version links here</body></html>"))
+		_, _ = w.Write([]byte("<html><body>no version links here</body></html>"))
 	}))
 	defer srv.Close()
 

@@ -26,15 +26,15 @@ func createTestZip(t *testing.T, entries map[string][]byte) string {
 			t.Fatal(err)
 		}
 	}
-	w.Close()
-	tmp.Close()
+	_ = w.Close()
+	_ = tmp.Close()
 	return tmp.Name()
 }
 
 func TestInstallExtFiles_BasicExtraction(t *testing.T) {
 	phpDir := t.TempDir()
 	extDir := filepath.Join(phpDir, "ext")
-	os.MkdirAll(extDir, 0755)
+	_ = os.MkdirAll(extDir, 0755)
 
 	zipPath := createTestZip(t, map[string][]byte{
 		"php_redis.dll": []byte("fake-redis-dll"),
@@ -71,7 +71,7 @@ func TestInstallExtFiles_BasicExtraction(t *testing.T) {
 func TestInstallExtFiles_NoExtDLL(t *testing.T) {
 	phpDir := t.TempDir()
 	extDir := filepath.Join(phpDir, "ext")
-	os.MkdirAll(extDir, 0755)
+	_ = os.MkdirAll(extDir, 0755)
 
 	zipPath := createTestZip(t, map[string][]byte{
 		"libcrypto.dll": []byte("support-dll"),
@@ -89,7 +89,7 @@ func TestInstallExtFiles_NoExtDLL(t *testing.T) {
 func TestInstallExtFiles_ZipSlipPrevention(t *testing.T) {
 	phpDir := t.TempDir()
 	extDir := filepath.Join(phpDir, "ext")
-	os.MkdirAll(extDir, 0755)
+	_ = os.MkdirAll(extDir, 0755)
 
 	// Create a zip with a path-traversal entry
 	zipPath := createTestZip(t, map[string][]byte{
@@ -105,9 +105,7 @@ func TestInstallExtFiles_ZipSlipPrevention(t *testing.T) {
 	}
 
 	// evil.dll should end up in phpDir (as a support DLL), NOT above it
-	if _, err := os.Stat(filepath.Join(phpDir, "evil.dll")); os.IsNotExist(err) {
-		// Also acceptable: the entry was rejected entirely
-	}
+	// evil.dll may or may not exist in phpDir — both outcomes are acceptable
 
 	// The file must NOT exist outside phpDir
 	parent := filepath.Dir(filepath.Dir(phpDir))
@@ -119,7 +117,7 @@ func TestInstallExtFiles_ZipSlipPrevention(t *testing.T) {
 func TestInstallExtFiles_SubdirectoryEntry(t *testing.T) {
 	phpDir := t.TempDir()
 	extDir := filepath.Join(phpDir, "ext")
-	os.MkdirAll(extDir, 0755)
+	_ = os.MkdirAll(extDir, 0755)
 
 	// Zip entries with subdirectory paths (common in PECL packages)
 	zipPath := createTestZip(t, map[string][]byte{
@@ -143,7 +141,7 @@ func TestInstallExtFiles_SubdirectoryEntry(t *testing.T) {
 func TestInstallExtFiles_DotDotEntry(t *testing.T) {
 	phpDir := t.TempDir()
 	extDir := filepath.Join(phpDir, "ext")
-	os.MkdirAll(extDir, 0755)
+	_ = os.MkdirAll(extDir, 0755)
 
 	// An entry named ".." should be silently skipped
 	zipPath := createTestZip(t, map[string][]byte{
@@ -163,7 +161,7 @@ func TestInstallExtFiles_DotDotEntry(t *testing.T) {
 func TestInstallExtFiles_CaseInsensitiveMatch(t *testing.T) {
 	phpDir := t.TempDir()
 	extDir := filepath.Join(phpDir, "ext")
-	os.MkdirAll(extDir, 0755)
+	_ = os.MkdirAll(extDir, 0755)
 
 	zipPath := createTestZip(t, map[string][]byte{
 		"php_Redis.DLL": []byte("case-dll"),
@@ -192,7 +190,7 @@ func assertFileContent(t *testing.T, path, expected string) {
 func TestAddExtensionToIni_NewExtension(t *testing.T) {
 	dir := t.TempDir()
 	iniPath := filepath.Join(dir, "php.ini")
-	os.WriteFile(iniPath, []byte("[PHP]\nmemory_limit=256M\n"), 0644)
+	_ = os.WriteFile(iniPath, []byte("[PHP]\nmemory_limit=256M\n"), 0644)
 
 	if err := addExtensionToIni(iniPath, "redis"); err != nil {
 		t.Fatal(err)
@@ -208,7 +206,7 @@ func TestAddExtensionToIni_NewExtension(t *testing.T) {
 func TestAddExtensionToIni_AlreadyPresent(t *testing.T) {
 	dir := t.TempDir()
 	iniPath := filepath.Join(dir, "php.ini")
-	os.WriteFile(iniPath, []byte("[PHP]\nextension=redis\n"), 0644)
+	_ = os.WriteFile(iniPath, []byte("[PHP]\nextension=redis\n"), 0644)
 
 	if err := addExtensionToIni(iniPath, "redis"); err != nil {
 		t.Fatal(err)
@@ -224,7 +222,7 @@ func TestAddExtensionToIni_AlreadyPresent(t *testing.T) {
 func TestAddExtensionToIni_CommentedOutPresent(t *testing.T) {
 	dir := t.TempDir()
 	iniPath := filepath.Join(dir, "php.ini")
-	os.WriteFile(iniPath, []byte("[PHP]\n;extension=redis\n"), 0644)
+	_ = os.WriteFile(iniPath, []byte("[PHP]\n;extension=redis\n"), 0644)
 
 	// Should detect the commented-out line and not add a duplicate
 	if err := addExtensionToIni(iniPath, "redis"); err != nil {
@@ -240,7 +238,7 @@ func TestAddExtensionToIni_CommentedOutPresent(t *testing.T) {
 func TestAddExtensionToIni_ZendExtension(t *testing.T) {
 	dir := t.TempDir()
 	iniPath := filepath.Join(dir, "php.ini")
-	os.WriteFile(iniPath, []byte("[PHP]\n"), 0644)
+	_ = os.WriteFile(iniPath, []byte("[PHP]\n"), 0644)
 
 	if err := addExtensionToIni(iniPath, "xdebug"); err != nil {
 		t.Fatal(err)
@@ -270,7 +268,7 @@ func TestAddExtensionToIni_BeforeTrailingSections(t *testing.T) {
 	// Note: due to slice aliasing in append, sections with content below them are
 	// NOT relocated — so we test the simplest case: section header as last non-blank line.
 	ini := "[PHP]\nmemory_limit=256M\n[curl]\n"
-	os.WriteFile(iniPath, []byte(ini), 0644)
+	_ = os.WriteFile(iniPath, []byte(ini), 0644)
 
 	if err := addExtensionToIni(iniPath, "redis"); err != nil {
 		t.Fatal(err)

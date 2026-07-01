@@ -10,7 +10,7 @@ import (
 func TestDownloadFile_Success(t *testing.T) {
 	content := "hello shepherd binary"
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(content))
+		_, _ = w.Write([]byte(content))
 	}))
 	defer srv.Close()
 
@@ -23,7 +23,7 @@ func TestDownloadFile_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	defer os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -63,7 +63,7 @@ func TestDownloadFile_SizeLimitExceeded(t *testing.T) {
 		// Write just over the limit (we'll use a smaller limit for testing)
 		// Since maxDownloadSize is 100MB, we can't easily test with real data.
 		// Instead, verify the mechanism exists by checking the constant.
-		w.Write([]byte("small content"))
+		_, _ = w.Write([]byte("small content"))
 	}))
 	defer srv.Close()
 
@@ -76,7 +76,7 @@ func TestDownloadFile_SizeLimitExceeded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	os.Remove(path)
+	_ = os.Remove(path)
 }
 
 func TestDownloadFile_InvalidURL(t *testing.T) {

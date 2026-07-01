@@ -20,7 +20,7 @@ func getUserPath() (string, uint32, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	defer key.Close()
+	defer key.Close() //nolint:errcheck // registry close is best-effort
 	val, valType, err := key.GetStringValue("Path")
 	if err != nil {
 		return "", 0, err
@@ -34,7 +34,7 @@ func setUserPath(path string, valType uint32) error {
 	if err != nil {
 		return err
 	}
-	defer key.Close()
+	defer key.Close() //nolint:errcheck // registry close is best-effort
 
 	// Preserve the registry value type (REG_EXPAND_SZ if it was already, for %USERPROFILE% etc.)
 	if valType == registry.EXPAND_SZ {
@@ -54,6 +54,7 @@ func broadcastSettingChange() {
 	sendMessageTimeout := user32.NewProc("SendMessageTimeoutW")
 	env, _ := windows.UTF16PtrFromString("Environment")
 	// HWND_BROADCAST=0xFFFF, WM_SETTINGCHANGE=0x001A, SMTO_ABORTIFHUNG=0x0002, timeout=5000ms
+	//nolint:errcheck // syscall errno is meaningless here
 	sendMessageTimeout.Call(0xFFFF, 0x001A, 0,
 		uintptr(unsafe.Pointer(env)), 0x0002, 5000, 0)
 }
