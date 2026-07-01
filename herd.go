@@ -122,8 +122,15 @@ func ensurePhpCgiRunning(phpVersion string) bool {
 	port := herdBasePort() + mustAtoi(nodot)
 	portStr := strconv.Itoa(port)
 
-	if checkPort("127.0.0.1", portStr) {
-		return true
+	// Retry a few times to avoid false negatives from transient TCP failures
+	// (antivirus scans, brief backlog under load, etc.)
+	for attempts := 0; attempts < 3; attempts++ {
+		if checkPort("127.0.0.1", portStr) {
+			return true
+		}
+		if attempts < 2 {
+			time.Sleep(250 * time.Millisecond)
+		}
 	}
 
 	// PHP-CGI is not running — attempt restart via herd.phar

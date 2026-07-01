@@ -544,10 +544,12 @@ func main() {
 	// Sync nginx config in background (if .phpversion exists)
 	if fromDotfile {
 		logVerbose("syncing nginx config for version %s", phpVersion)
-		syncNginx(cwd, phpVersion)
+		changed := syncNginx(cwd, phpVersion)
 
-		// Ensure PHP-CGI service is running for this version
-		ensurePhpCgiRunning(phpVersion)
+		// Ensure PHP-CGI service is running only if nginx config changed (version switch)
+		if changed {
+			ensurePhpCgiRunning(phpVersion)
+		}
 	}
 
 	// Exec PHP

@@ -152,14 +152,15 @@ func updateNginxConf(confPath, version string) bool {
 // It resolves symlinks/junctions to find the physical project path, scans for all
 // related conf files (including aliases via herd link), applies per-domain rate
 // limiting, and triggers a single restart if any conf was modified.
-func syncNginx(projectDir, version string) {
+// Returns true if any config was actually changed (indicating a version switch).
+func syncNginx(projectDir, version string) bool {
 	// Resolve NTFS junctions/symlinks to the real physical path
 	physicalDir := resolvePhysicalPath(projectDir)
 
 	// Find all nginx conf files that reference this project
 	confs := findNginxConfsForProject(physicalDir)
 	if len(confs) == 0 {
-		return
+		return false
 	}
 
 	needNginxRestart := false
@@ -182,17 +183,18 @@ func syncNginx(projectDir, version string) {
 
 	// Single nginx restart for all modified confs
 	if !needNginxRestart {
-		return
+		return false
 	}
 
 	logVerbose("restarting nginx (configs modified)")
 	bootstrap, err := mostRecentPHP()
 	if err != nil {
-		return
+		return true
 	}
 	herdPhar := filepath.Join(herdHome(), "herd.phar")
 	cmd := exec.Command(bootstrap, herdPhar, "restart", "nginx")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	_ = cmd.Run()
+	return true
 }
