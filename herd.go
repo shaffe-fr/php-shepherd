@@ -50,6 +50,10 @@ func herdParkedPaths() []string {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil
 	}
+	// Normalize paths from JSON (Herd stores forward slashes on Windows)
+	for i, p := range config.Paths {
+		config.Paths[i] = filepath.FromSlash(p)
+	}
 	return config.Paths
 }
 

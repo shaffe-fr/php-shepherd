@@ -20,7 +20,7 @@ func nginxConfDir() string {
 // to the same physical path.
 func findNginxConfsForProject(physicalDir string) []string {
 	confDir := nginxConfDir()
-	physicalDirLower := strings.ToLower(physicalDir)
+	physicalDirLower := strings.ToLower(resolvePhysicalPath(physicalDir))
 
 	// Collect all domain names that map to this physical directory
 	var domains []string
