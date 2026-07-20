@@ -117,6 +117,13 @@ shp run latest -- php -v
 
 The resolved version applies only to that command. Your `.phpversion` stays untouched.
 
+With `--json`, both `shp run` and `shp xdebug run` capture and return structured output:
+
+```powershell
+shp --json run 8.3 -- php -v
+# {"exitCode":0,"phpVersion":"8.3","stdout":"PHP 8.3.12 ...","stderr":""}
+```
+
 ## Auto-detection from composer.json
 
 Don't know which version to pin? Let Shepherd figure it out:

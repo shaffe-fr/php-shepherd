@@ -955,6 +955,55 @@ func cmdUse() {
 	}
 }
 
+// execCmdResult runs cmd and, if jsonOutput is enabled, captures stdout/stderr and
+// emits a structured JSON result instead of piping streams directly.
+// extraFields are merged into the JSON output (e.g. "mode", "phpVersion").
+// In non-JSON mode, streams are passed through transparently.
+func execCmdResult(cmd *exec.Cmd, extraFields map[string]interface{}) {
+	if !jsonOutput {
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				os.Exit(exitErr.ExitCode())
+			}
+			os.Exit(1)
+		}
+		return
+	}
+
+	// JSON mode: capture output
+	var stdout, stderr bytes.Buffer
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	exitCode := 0
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+
+	result := map[string]interface{}{
+		"exitCode": exitCode,
+		"stdout":   stdout.String(),
+		"stderr":   stderr.String(),
+	}
+	for k, v := range extraFields {
+		result[k] = v
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(result)
+
+	os.Exit(exitCode)
+}
+
 // cmdRun executes a command with a specific PHP version without modifying .phpversion.
 // Usage: shp run <version> -- <command...>
 func cmdRun() {
@@ -1052,31 +1101,15 @@ func cmdRun() {
 	default:
 		// Any other command: just exec it directly, setting PATH so our resolved PHP is first
 		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
 		// Prepend the PHP dir to PATH so child processes find the right php
 		phpBinDir := filepath.Dir(targetPHP)
 		cmd.Env = append(os.Environ(), "PATH="+phpBinDir+";"+os.Getenv("PATH"))
-		if err := cmd.Run(); err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				os.Exit(exitErr.ExitCode())
-			}
-			os.Exit(1)
-		}
+		execCmdResult(cmd, map[string]interface{}{"phpVersion": ver})
 		return
 	}
 
 	cmd := exec.Command(targetPHP, execArgs...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
-		}
-		os.Exit(1)
-	}
+	execCmdResult(cmd, map[string]interface{}{"phpVersion": ver})
 }
 
 // killShimProcesses kills any running shim processes from the given directory.
