@@ -19,6 +19,8 @@ import (
 // githubRelease represents a GitHub release API response.
 type githubRelease struct {
 	TagName string        `json:"tag_name"`
+	Body    string        `json:"body"`
+	HTMLURL string        `json:"html_url"`
 	Assets  []githubAsset `json:"assets"`
 }
 
@@ -342,10 +344,64 @@ func cmdSelfUpdate() {
 			"status":          "updated",
 			"previousVersion": currentVersion,
 			"newVersion":      latestVersion,
+			"changelog":       release.Body,
+			"releaseUrl":      release.HTMLURL,
 		})
 	} else {
 		fmt.Printf("\n✅ Shepherd updated to %s\n", latestVersion)
+		if changelog := formatChangelog(release.Body, release.HTMLURL, 20); changelog != "" {
+			fmt.Printf("\nWhat's new:\n%s", changelog)
+		}
 	}
+}
+
+// formatChangelog cleans up markdown release notes for terminal display.
+// It strips markdown heading markers, trims blank lines, truncates to maxLines,
+// and appends a link to the full release if truncated.
+func formatChangelog(body, releaseURL string, maxLines int) string {
+	if body == "" {
+		return ""
+	}
+
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+
+	// Clean markdown: strip heading prefixes and leading/trailing blank lines.
+	cleaned := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimLeft(line, "# ")
+		// Collapse repeated blank lines
+		if trimmed == "" && len(cleaned) > 0 && cleaned[len(cleaned)-1] == "" {
+			continue
+		}
+		cleaned = append(cleaned, trimmed)
+	}
+
+	// Trim leading/trailing blank lines
+	for len(cleaned) > 0 && cleaned[0] == "" {
+		cleaned = cleaned[1:]
+	}
+	for len(cleaned) > 0 && cleaned[len(cleaned)-1] == "" {
+		cleaned = cleaned[:len(cleaned)-1]
+	}
+
+	truncated := false
+	if len(cleaned) > maxLines {
+		cleaned = cleaned[:maxLines]
+		truncated = true
+	}
+
+	var sb strings.Builder
+	for _, line := range cleaned {
+		sb.WriteString("  ")
+		sb.WriteString(line)
+		sb.WriteByte('\n')
+	}
+
+	if truncated && releaseURL != "" {
+		fmt.Fprintf(&sb, "\n  Full changelog: %s\n", releaseURL)
+	}
+
+	return sb.String()
 }
 
 // validateDownloadURL ensures the URL points to an allowed GitHub host.

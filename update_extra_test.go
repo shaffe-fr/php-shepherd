@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -559,6 +560,120 @@ func TestUnpatchPowerShellProfile(t *testing.T) {
 	if _, err := os.Stat(snippetPath); !os.IsNotExist(err) {
 		t.Error("expected snippet file to be deleted")
 	}
+}
+
+func TestFormatChangelog(t *testing.T) {
+	t.Run("empty body returns empty string", func(t *testing.T) {
+		got := formatChangelog("", "https://example.com", 20)
+		if got != "" {
+			t.Errorf("expected empty string, got %q", got)
+		}
+	})
+
+	t.Run("strips markdown headers", func(t *testing.T) {
+		body := "## Bug Fixes\n- Fixed a crash\n### Details\n- More info"
+		got := formatChangelog(body, "", 20)
+		if containsSubstr(got, "##") {
+			t.Errorf("expected markdown headers to be stripped, got:\n%s", got)
+		}
+		if !containsSubstr(got, "Bug Fixes") {
+			t.Errorf("expected header text to remain, got:\n%s", got)
+		}
+	})
+
+	t.Run("no truncation when under limit", func(t *testing.T) {
+		body := "- Fix A\n- Fix B\n- Fix C"
+		got := formatChangelog(body, "https://example.com/releases/v1", 20)
+		if containsSubstr(got, "Full changelog") {
+			t.Errorf("expected no truncation link when under limit, got:\n%s", got)
+		}
+	})
+
+	t.Run("truncates and adds link when over limit", func(t *testing.T) {
+		lines := ""
+		for i := 0; i < 30; i++ {
+			lines += fmt.Sprintf("- Item %d\n", i)
+		}
+		got := formatChangelog(lines, "https://github.com/org/repo/releases/tag/v1.0.0", 20)
+		if !containsSubstr(got, "Full changelog") {
+			t.Errorf("expected truncation link, got:\n%s", got)
+		}
+		if !containsSubstr(got, "https://github.com/org/repo/releases/tag/v1.0.0") {
+			t.Errorf("expected release URL in link, got:\n%s", got)
+		}
+		// Should not contain item 25 (0-indexed, beyond 20 lines)
+		if containsSubstr(got, "Item 25") {
+			t.Errorf("expected content beyond 20 lines to be cut, got:\n%s", got)
+		}
+	})
+
+	t.Run("no link when truncated but URL is empty", func(t *testing.T) {
+		lines := ""
+		for i := 0; i < 30; i++ {
+			lines += fmt.Sprintf("- Item %d\n", i)
+		}
+		got := formatChangelog(lines, "", 20)
+		if containsSubstr(got, "Full changelog") {
+			t.Errorf("expected no link when URL is empty, got:\n%s", got)
+		}
+	})
+
+	t.Run("collapses repeated blank lines", func(t *testing.T) {
+		body := "- Fix A\n\n\n\n- Fix B"
+		got := formatChangelog(body, "", 20)
+		// Should not have more than one consecutive empty indented line
+		if containsSubstr(got, "  \n  \n") {
+			t.Errorf("expected blank lines to be collapsed, got:\n%q", got)
+		}
+	})
+
+	t.Run("trims leading and trailing blank lines", func(t *testing.T) {
+		body := "\n\n- Fix A\n- Fix B\n\n"
+		got := formatChangelog(body, "", 20)
+		// First non-empty output line should start with content
+		if len(got) > 0 && got[:2] == "  " && got[2] == '\n' {
+			t.Errorf("expected leading blank lines to be trimmed, got:\n%q", got)
+		}
+	})
+
+	t.Run("handles CRLF line endings", func(t *testing.T) {
+		body := "## Changes\r\n- Fix A\r\n- Fix B"
+		got := formatChangelog(body, "", 20)
+		if containsSubstr(got, "\r") {
+			t.Errorf("expected CRLF to be normalized, got:\n%q", got)
+		}
+		if !containsSubstr(got, "Fix A") {
+			t.Errorf("expected content to be preserved, got:\n%s", got)
+		}
+	})
+
+	t.Run("indents each line with two spaces", func(t *testing.T) {
+		body := "- Fix A\n- Fix B"
+		got := formatChangelog(body, "", 20)
+		for _, line := range splitLines(got) {
+			if line == "" {
+				continue
+			}
+			if len(line) < 2 || line[:2] != "  " {
+				t.Errorf("expected 2-space indent, got line: %q", line)
+			}
+		}
+	})
+}
+
+func splitLines(s string) []string {
+	var lines []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			lines = append(lines, s[start:i])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		lines = append(lines, s[start:])
+	}
+	return lines
 }
 
 // --- JSON serialization helpers test ---
