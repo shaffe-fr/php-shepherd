@@ -167,8 +167,10 @@ func triggerUpdateCheckIfStale() {
 
 // cmdSelfUpdate checks for a newer release on GitHub and updates the binary.
 func cmdSelfUpdate() {
-	fmt.Printf("shp %s\n", version)
-	fmt.Println("Checking for updates...")
+	if !jsonOutput {
+		fmt.Printf("shp %s\n", version)
+		fmt.Println("Checking for updates...")
+	}
 
 	// Fetch latest release from GitHub API
 	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", githubRepo)
@@ -203,11 +205,22 @@ func cmdSelfUpdate() {
 	currentVersion := strings.TrimPrefix(version, "v")
 
 	if latestVersion == currentVersion {
-		fmt.Printf("Already up to date (%s).\n", version)
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(map[string]interface{}{
+				"status":         "up_to_date",
+				"currentVersion": currentVersion,
+			})
+		} else {
+			fmt.Printf("Already up to date (%s).\n", version)
+		}
 		return
 	}
 
-	fmt.Printf("New version available: %s → %s\n", currentVersion, latestVersion)
+	if !jsonOutput {
+		fmt.Printf("New version available: %s → %s\n", currentVersion, latestVersion)
+	}
 
 	// Find the right asset for this OS/arch
 	arch := runtime.GOARCH
@@ -243,7 +256,7 @@ func cmdSelfUpdate() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Downloading %s...\n", assetName)
+	fmt.Fprintf(os.Stderr, "Downloading %s...\n", assetName)
 
 	// Download the zip
 	zipPath, err := downloadFile(downloadURL)
@@ -267,9 +280,9 @@ func cmdSelfUpdate() {
 		fmt.Fprintf(os.Stderr, "The downloaded file may have been tampered with.\n")
 		os.Exit(1)
 	}
-	fmt.Println("Checksum verified ✓")
+	fmt.Fprintln(os.Stderr, "Checksum verified ✓")
 	if hasCosignSig {
-		fmt.Println("Signature verified ✓")
+		fmt.Fprintln(os.Stderr, "Signature verified ✓")
 	}
 
 	// Extract shp.exe from the zip
@@ -292,7 +305,9 @@ func cmdSelfUpdate() {
 		fmt.Fprintf(os.Stderr, "Error replacing binary: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("  ✓ Updated %s\n", self)
+	if !jsonOutput {
+		fmt.Printf("  ✓ Updated %s\n", self)
+	}
 
 	// Also update shims if they exist
 	dir := shimDir()
@@ -305,7 +320,9 @@ func cmdSelfUpdate() {
 			newCopy, err := extractBinaryFromZip(zipPath, "shp.exe")
 			if err == nil {
 				if err := replaceBinary(shimPath, newCopy); err == nil {
-					fmt.Printf("  ✓ Updated %s\n", shimPath)
+					if !jsonOutput {
+						fmt.Printf("  ✓ Updated %s\n", shimPath)
+					}
 				}
 				_ = os.Remove(newCopy)
 			}
@@ -318,7 +335,17 @@ func cmdSelfUpdate() {
 		CheckedAt:     time.Now().Unix(),
 	})
 
-	fmt.Printf("\n✅ Shepherd updated to %s\n", latestVersion)
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]interface{}{
+			"status":          "updated",
+			"previousVersion": currentVersion,
+			"newVersion":      latestVersion,
+		})
+	} else {
+		fmt.Printf("\n✅ Shepherd updated to %s\n", latestVersion)
+	}
 }
 
 // validateDownloadURL ensures the URL points to an allowed GitHub host.

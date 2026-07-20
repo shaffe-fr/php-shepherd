@@ -687,6 +687,7 @@ func cmdCurrent() {
 
 	if jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
 		_ = enc.Encode(map[string]string{"version": phpVersion})
 		return
 	}
@@ -721,8 +722,23 @@ func cmdList() {
 	type phpVer struct {
 		Version string `json:"version"`
 		Active  bool   `json:"active"`
+		Latest  bool   `json:"latest"`
 		Path    string `json:"path"`
 	}
+
+	// Determine latest version
+	latestVersion := ""
+	for i := len(matches) - 1; i >= 0; i-- {
+		if _, err := os.Stat(filepath.Join(matches[i], "php.exe")); err != nil {
+			continue
+		}
+		dm := phpDirRe.FindStringSubmatch(filepath.Base(matches[i]))
+		if len(dm) == 3 {
+			latestVersion = dm[1] + "." + dm[2]
+			break
+		}
+	}
+
 	var versions []phpVer
 	for _, m := range matches {
 		dirName := filepath.Base(m)
@@ -741,6 +757,7 @@ func cmdList() {
 		versions = append(versions, phpVer{
 			Version: ver,
 			Active:  ver == currentVersion,
+			Latest:  ver == latestVersion,
 			Path:    m,
 		})
 	}
@@ -755,8 +772,15 @@ func cmdList() {
 	fmt.Println("Available PHP versions:")
 	fmt.Println()
 	for _, v := range versions {
+		var tags []string
 		if v.Active {
-			fmt.Printf("  → %s (active)\n", v.Version)
+			tags = append(tags, "active")
+		}
+		if v.Latest {
+			tags = append(tags, "latest")
+		}
+		if len(tags) > 0 {
+			fmt.Printf("  → %s (%s)\n", v.Version, strings.Join(tags, ", "))
 		} else {
 			fmt.Printf("    %s\n", v.Version)
 		}
@@ -802,8 +826,13 @@ func cmdUse() {
 			}
 		}
 
-		fmt.Println("Available PHP versions:")
-		fmt.Println()
+		type useVersion struct {
+			Version string `json:"version"`
+			Active  bool   `json:"active"`
+			Latest  bool   `json:"latest"`
+		}
+		var versions []useVersion
+
 		for _, m := range matches {
 			dirName := filepath.Base(m)
 			v := phpDirVersion(m)
@@ -819,19 +848,35 @@ func cmdUse() {
 				continue
 			}
 			ver := dm[1] + "." + dm[2]
+			versions = append(versions, useVersion{
+				Version: ver,
+				Active:  ver == currentVersion,
+				Latest:  ver == latestVersion,
+			})
+		}
 
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(versions)
+			return
+		}
+
+		fmt.Println("Available PHP versions:")
+		fmt.Println()
+		for _, v := range versions {
 			var tags []string
-			if ver == currentVersion {
+			if v.Active {
 				tags = append(tags, "active")
 			}
-			if ver == latestVersion {
+			if v.Latest {
 				tags = append(tags, "latest")
 			}
 
 			if len(tags) > 0 {
-				fmt.Printf("  → %s (%s)\n", ver, strings.Join(tags, ", "))
+				fmt.Printf("  → %s (%s)\n", v.Version, strings.Join(tags, ", "))
 			} else {
-				fmt.Printf("    %s\n", ver)
+				fmt.Printf("    %s\n", v.Version)
 			}
 		}
 		return
@@ -898,7 +943,16 @@ func cmdUse() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("  ✓ .phpversion set to %s\n", ver)
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]interface{}{
+			"version": ver,
+			"file":    target,
+		})
+	} else {
+		fmt.Printf("  ✓ .phpversion set to %s\n", ver)
+	}
 }
 
 // cmdRun executes a command with a specific PHP version without modifying .phpversion.
@@ -916,6 +970,16 @@ func cmdRun() {
 	ver := os.Args[2]
 
 	if ver == "-h" || ver == "--help" {
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(map[string]interface{}{
+				"command":     "run",
+				"usage":       "shp run <version> -- <command...>",
+				"description": "Run a command with a specific PHP version without modifying .phpversion",
+			})
+			return
+		}
 		fmt.Println("Usage: shp run <version> -- <command...>")
 		fmt.Println()
 		fmt.Println("Run a command with a specific PHP version without modifying .phpversion.")
@@ -1227,9 +1291,11 @@ func cmdUninstall() {
 	dir := shimDir()
 
 	// Remove shim directory
+	shimRemoved := false
 	if err := os.RemoveAll(dir); err != nil {
 		fmt.Fprintf(os.Stderr, "Error removing %s: %v\n", dir, err)
 	} else {
+		shimRemoved = true
 		logInfo("  ✓ Removed %s\n", dir)
 	}
 
@@ -1257,6 +1323,17 @@ func cmdUninstall() {
 
 	// Remove PowerShell profile integration
 	unpatchPowerShellProfile()
+
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]interface{}{
+			"shimDir":      dir,
+			"shimRemoved":  shimRemoved,
+			"pathRestored": true,
+		})
+		return
+	}
 
 	logInfo("  ✓ Removed %s from User PATH\n", dir)
 	logInfo("\n")

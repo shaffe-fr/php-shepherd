@@ -168,8 +168,8 @@ func cmdXdebug() {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Println("  ⏸️  xdebug disabled")
 			xdebugRestartNginx()
+			xdebugActionResult(version, false, "off")
 		} else if zendIdx != -1 {
 			// Currently off → turn on (strip leading semicolons and spaces)
 			trimmed := strings.TrimSpace(lines[zendIdx])
@@ -181,8 +181,8 @@ func cmdXdebug() {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Println("  ✅ xdebug enabled (mode: debug)")
 			xdebugRestartNginx()
+			xdebugActionResult(version, true, "debug")
 		} else {
 			// No xdebug line — add it
 			dllPath := xdebugDLLPath(version)
@@ -199,8 +199,8 @@ func cmdXdebug() {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Println("  ✅ xdebug enabled (mode: debug)")
 			xdebugRestartNginx()
+			xdebugActionResult(version, true, "debug")
 		}
 		return
 	}
@@ -220,11 +220,19 @@ func cmdXdebug() {
 	// If "off" is requested, just disable
 	if mode == "off" {
 		if zendIdx == -1 {
-			fmt.Println("  xdebug is not configured — nothing to disable")
+			if jsonOutput {
+				xdebugActionResult(version, false, "off")
+			} else {
+				fmt.Println("  xdebug is not configured — nothing to disable")
+			}
 			return
 		}
 		if !zendEnabled {
-			fmt.Println("  xdebug is already disabled")
+			if jsonOutput {
+				xdebugActionResult(version, false, "off")
+			} else {
+				fmt.Println("  xdebug is already disabled")
+			}
 			return
 		}
 		lines[zendIdx] = ";" + lines[zendIdx]
@@ -232,8 +240,8 @@ func cmdXdebug() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("  ⏸️  xdebug disabled")
 		xdebugRestartNginx()
+		xdebugActionResult(version, false, "off")
 		return
 	}
 
@@ -254,8 +262,8 @@ func cmdXdebug() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("  ✅ xdebug enabled (mode: %s)\n", mode)
 		xdebugRestartNginx()
+		xdebugActionResult(version, true, mode)
 		return
 	}
 
@@ -274,12 +282,29 @@ func cmdXdebug() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	if !zendEnabled {
+	xdebugRestartNginx()
+	xdebugActionResult(version, true, mode)
+}
+
+// xdebugActionResult outputs the result of an xdebug action (enable/disable/mode change).
+// In JSON mode it emits structured output; in human mode it prints the familiar status line.
+func xdebugActionResult(phpVersion string, enabled bool, mode string) {
+	if jsonOutput {
+		result := map[string]interface{}{
+			"phpVersion": phpVersion,
+			"enabled":    enabled,
+			"mode":       mode,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return
+	}
+	if enabled {
 		fmt.Printf("  ✅ xdebug enabled (mode: %s)\n", mode)
 	} else {
-		fmt.Printf("  ✅ xdebug mode updated to: %s\n", mode)
+		fmt.Println("  ⏸️  xdebug disabled")
 	}
-	xdebugRestartNginx()
 }
 
 // xdebugRestartNginx restarts nginx so that xdebug config changes take effect on served sites.

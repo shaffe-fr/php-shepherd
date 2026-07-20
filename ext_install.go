@@ -128,31 +128,50 @@ func cmdExtInstall() {
 
 		// Install system-level dependencies once
 		if len(extDef.wingetDeps) > 0 {
-			fmt.Println("Checking system dependencies...")
+			fmt.Fprintln(os.Stderr, "Checking system dependencies...")
 			if err := installWingetDeps(extDef.wingetDeps); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 				fmt.Fprintf(os.Stderr, "  The extension may not work without this dependency.\n")
 			}
-			fmt.Println()
+			fmt.Fprintln(os.Stderr)
 		}
 
-		fmt.Printf("Installing %s %s for all PHP versions: %s\n\n", extName, extVersion, strings.Join(versions, ", "))
+		fmt.Fprintf(os.Stderr, "Installing %s %s for all PHP versions: %s\n\n", extName, extVersion, strings.Join(versions, ", "))
 
 		var failed []string
 		for _, ver := range versions {
-			fmt.Printf("── PHP %s ──\n", ver)
+			fmt.Fprintf(os.Stderr, "── PHP %s ──\n", ver)
 			if err := installExtForVersion(extDef, extName, extVersion, ver, vsVersion, threadSafe); err != nil {
 				fmt.Fprintf(os.Stderr, "  ✗ %v\n", err)
 				failed = append(failed, ver)
 			}
-			fmt.Println()
+			fmt.Fprintln(os.Stderr)
 		}
 
-		if len(failed) > 0 {
+		if jsonOutput {
+			// Ensure failed is [] not null when empty
+			if failed == nil {
+				failed = []string{}
+			}
+			result := map[string]interface{}{
+				"extension":   extName,
+				"version":     extVersion,
+				"phpVersions": versions,
+				"failed":      failed,
+				"success":     len(failed) == 0,
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(result)
+			if len(failed) > 0 {
+				os.Exit(1)
+			}
+		} else if len(failed) > 0 {
 			fmt.Printf("⚠️  Failed for: %s\n", strings.Join(failed, ", "))
 			os.Exit(1)
+		} else {
+			fmt.Printf("✅ %s %s installed for all PHP versions\n", extName, extVersion)
 		}
-		fmt.Printf("✅ %s %s installed for all PHP versions\n", extName, extVersion)
 		return
 	}
 
@@ -196,16 +215,16 @@ func cmdExtInstall() {
 		}
 	}
 
-	fmt.Printf("Extension: %s %s\n", extName, extVersion)
+	fmt.Fprintf(os.Stderr, "Extension: %s %s\n", extName, extVersion)
 
 	// Install system-level dependencies via winget (e.g. ODBC Driver for sqlsrv)
 	if len(extDef.wingetDeps) > 0 {
-		fmt.Println("Checking system dependencies...")
+		fmt.Fprintf(os.Stderr, "Checking system dependencies...\n")
 		if err := installWingetDeps(extDef.wingetDeps); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 			fmt.Fprintf(os.Stderr, "  The extension may not work without this dependency.\n")
 		}
-		fmt.Println()
+		fmt.Fprintln(os.Stderr)
 	}
 
 	// Build download URL
@@ -216,7 +235,7 @@ func cmdExtInstall() {
 	arch := "x64"
 	downloadURL := buildExtURL(extDef.source.urlPattern, extVersion, phpVersion, ts, vsVersion, arch)
 
-	fmt.Printf("Downloading: %s\n", downloadURL)
+	fmt.Fprintf(os.Stderr, "Downloading: %s\n", downloadURL)
 
 	// Download extension zip
 	zipPath, err := downloadFile(downloadURL)
@@ -228,7 +247,7 @@ func cmdExtInstall() {
 	}
 	defer func() { _ = os.Remove(zipPath) }()
 
-	fmt.Println("Download OK.")
+	fmt.Fprintln(os.Stderr, "Download OK.")
 
 	// Extract and install
 	extDir := filepath.Join(phpDir, "ext")
@@ -250,7 +269,7 @@ func cmdExtInstall() {
 	// Download and install dependency libraries (e.g. ImageMagick DLLs for imagick)
 	if extDef.source.depsURLPattern != "" {
 		depsURL := buildExtURL(extDef.source.depsURLPattern, extVersion, phpVersion, ts, vsVersion, arch)
-		fmt.Printf("Downloading dependencies: %s\n", depsURL)
+		fmt.Fprintf(os.Stderr, "Downloading dependencies: %s\n", depsURL)
 
 		depsZipPath, err := downloadFile(depsURL)
 		if err != nil {
@@ -261,7 +280,7 @@ func cmdExtInstall() {
 			if _, err := installExtFiles(depsZipPath, extName, phpDir, extDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to install dependencies: %v\n", err)
 			} else {
-				fmt.Println("Dependencies installed.")
+				fmt.Fprintln(os.Stderr, "Dependencies installed.")
 			}
 		}
 	}
@@ -274,9 +293,21 @@ func cmdExtInstall() {
 	}
 
 	// Verify
-	fmt.Println()
-	fmt.Println("Verifying...")
-	if verifyExtension(phpExe, extDir, extName) {
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Verifying...")
+	verified := verifyExtension(phpExe, extDir, extName)
+
+	if jsonOutput {
+		result := map[string]interface{}{
+			"extension":  extName,
+			"version":    extVersion,
+			"phpVersion": phpVersion,
+			"verified":   verified,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+	} else if verified {
 		fmt.Printf("✅ %s %s installed for PHP %s\n", extName, extVersion, phpVersion)
 	} else {
 		fmt.Printf("⚠️  %s may not be loaded correctly. Verify with:\n", extName)
@@ -285,8 +316,8 @@ func cmdExtInstall() {
 
 	// Show post-install message if any (e.g. external dependencies)
 	if extDef.postInstallMsg != "" {
-		fmt.Println()
-		fmt.Printf("  Note: %s\n", extDef.postInstallMsg)
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "  Note: %s\n", extDef.postInstallMsg)
 	}
 }
 
@@ -665,11 +696,30 @@ func cmdExtRemove() {
 			fmt.Fprintf(os.Stderr, "Error: no PHP installations found\n")
 			os.Exit(1)
 		}
-		fmt.Printf("Removing %s from all PHP versions: %s\n\n", extName, strings.Join(versions, ", "))
+		if !jsonOutput {
+			fmt.Printf("Removing %s from all PHP versions: %s\n\n", extName, strings.Join(versions, ", "))
+		}
+		results := make([]map[string]interface{}, 0, len(versions))
 		for _, ver := range versions {
-			fmt.Printf("── PHP %s ──\n", ver)
-			removeExtForVersion(extName, ver)
-			fmt.Println()
+			if !jsonOutput {
+				fmt.Printf("── PHP %s ──\n", ver)
+			}
+			removed := removeExtForVersion(extName, ver)
+			results = append(results, map[string]interface{}{
+				"phpVersion": ver,
+				"removed":    removed,
+			})
+			if !jsonOutput {
+				fmt.Println()
+			}
+		}
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(map[string]interface{}{
+				"extension": extName,
+				"results":   results,
+			})
 		}
 		return
 	}
@@ -687,18 +737,28 @@ func cmdExtRemove() {
 		}
 	}
 
-	removeExtForVersion(extName, phpVersion)
+	removed := removeExtForVersion(extName, phpVersion)
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]interface{}{
+			"extension":  extName,
+			"phpVersion": phpVersion,
+			"removed":    removed,
+		})
+	}
 }
 
 // removeExtForVersion removes an extension from a specific PHP version.
-func removeExtForVersion(extName, phpVersion string) {
+// Returns true if anything was actually removed.
+func removeExtForVersion(extName, phpVersion string) bool {
 	nodot := strings.ReplaceAll(phpVersion, ".", "")
 	phpDir := filepath.Join(herdHome(), "php"+nodot)
 	extDir := filepath.Join(phpDir, "ext")
 
 	if _, err := os.Stat(phpDir); err != nil {
 		fmt.Fprintf(os.Stderr, "  Error: PHP %s not found at %s\n", phpVersion, phpDir)
-		return
+		return false
 	}
 
 	// Remove the DLL(s)
@@ -711,7 +771,9 @@ func removeExtForVersion(extName, phpVersion string) {
 		if err := os.Remove(dllPath); err != nil {
 			fmt.Fprintf(os.Stderr, "  Error removing %s: %v\n", dllPath, err)
 		} else {
-			fmt.Printf("  ✓ Removed %s\n", dllPath)
+			if !jsonOutput {
+				fmt.Printf("  ✓ Removed %s\n", dllPath)
+			}
 			removed = true
 		}
 	}
@@ -726,13 +788,16 @@ func removeExtForVersion(extName, phpVersion string) {
 	if err := removeExtensionFromIni(iniPath, extName); err != nil {
 		fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
 	} else {
-		fmt.Printf("  ✓ Removed from php.ini\n")
+		if !jsonOutput {
+			fmt.Printf("  ✓ Removed from php.ini\n")
+		}
 		removed = true
 	}
 
-	if !removed {
+	if !removed && !jsonOutput {
 		fmt.Printf("  Extension %s was not installed for PHP %s\n", extName, phpVersion)
 	}
+	return removed
 }
 
 // removeExtensionFromIni removes or comments out an extension directive from php.ini.
