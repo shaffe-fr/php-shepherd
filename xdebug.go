@@ -169,6 +169,7 @@ func cmdXdebug() {
 				os.Exit(1)
 			}
 			fmt.Println("  ⏸️  xdebug disabled")
+			xdebugRestartNginx()
 		} else if zendIdx != -1 {
 			// Currently off → turn on (strip leading semicolons and spaces)
 			trimmed := strings.TrimSpace(lines[zendIdx])
@@ -181,6 +182,7 @@ func cmdXdebug() {
 				os.Exit(1)
 			}
 			fmt.Println("  ✅ xdebug enabled (mode: debug)")
+			xdebugRestartNginx()
 		} else {
 			// No xdebug line — add it
 			dllPath := xdebugDLLPath(version)
@@ -198,6 +200,7 @@ func cmdXdebug() {
 				os.Exit(1)
 			}
 			fmt.Println("  ✅ xdebug enabled (mode: debug)")
+			xdebugRestartNginx()
 		}
 		return
 	}
@@ -230,6 +233,7 @@ func cmdXdebug() {
 			os.Exit(1)
 		}
 		fmt.Println("  ⏸️  xdebug disabled")
+		xdebugRestartNginx()
 		return
 	}
 
@@ -251,6 +255,7 @@ func cmdXdebug() {
 			os.Exit(1)
 		}
 		fmt.Printf("  ✅ xdebug enabled (mode: %s)\n", mode)
+		xdebugRestartNginx()
 		return
 	}
 
@@ -273,6 +278,18 @@ func cmdXdebug() {
 		fmt.Printf("  ✅ xdebug enabled (mode: %s)\n", mode)
 	} else {
 		fmt.Printf("  ✅ xdebug mode updated to: %s\n", mode)
+	}
+	xdebugRestartNginx()
+}
+
+// xdebugRestartNginx restarts nginx so that xdebug config changes take effect on served sites.
+func xdebugRestartNginx() {
+	if err := restartNginx(); err != nil {
+		logVerbose("nginx restart failed: %v", err)
+		return
+	}
+	if !jsonOutput {
+		fmt.Println("  ↻ nginx restarted")
 	}
 }
 

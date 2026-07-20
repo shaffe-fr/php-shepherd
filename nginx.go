@@ -148,6 +148,20 @@ func updateNginxConf(confPath, version string) bool {
 	return true
 }
 
+// restartNginx triggers a Herd nginx restart via herd.phar.
+// Returns nil on success, or an error if the restart could not be performed.
+func restartNginx() error {
+	bootstrap, err := mostRecentPHP()
+	if err != nil {
+		return err
+	}
+	herdPhar := filepath.Join(herdHome(), "herd.phar")
+	cmd := exec.Command(bootstrap, herdPhar, "restart", "nginx")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return cmd.Run()
+}
+
 // syncNginx updates all Herd nginx configs for the project, then restarts nginx once.
 // It resolves symlinks/junctions to find the physical project path, scans for all
 // related conf files (including aliases via herd link), applies per-domain rate
@@ -187,14 +201,6 @@ func syncNginx(projectDir, version string) bool {
 	}
 
 	logVerbose("restarting nginx (configs modified)")
-	bootstrap, err := mostRecentPHP()
-	if err != nil {
-		return true
-	}
-	herdPhar := filepath.Join(herdHome(), "herd.phar")
-	cmd := exec.Command(bootstrap, herdPhar, "restart", "nginx")
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	_ = cmd.Run()
+	_ = restartNginx()
 	return true
 }
