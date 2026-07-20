@@ -258,6 +258,9 @@ func cmdXdebug() {
 		lines = append(lines, "xdebug.mode="+mode)
 		lines = append(lines, "xdebug.discover_client_host=true")
 		lines = append(lines, "xdebug.start_with_request=yes")
+		if xdebugNeedsOutputDir(mode) {
+			lines = append(lines, "xdebug.output_dir=.")
+		}
 		if err := writeIni(iniPath, lines); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -277,6 +280,9 @@ func cmdXdebug() {
 	lines = ensureIniValue(lines, zendIdx, "xdebug.mode", mode)
 	lines = ensureIniValue(lines, zendIdx, "xdebug.discover_client_host", "true")
 	lines = ensureIniValue(lines, zendIdx, "xdebug.start_with_request", "yes")
+	if xdebugNeedsOutputDir(mode) {
+		lines = ensureIniValue(lines, zendIdx, "xdebug.output_dir", ".")
+	}
 
 	if err := writeIni(iniPath, lines); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -284,6 +290,12 @@ func cmdXdebug() {
 	}
 	xdebugRestartNginx()
 	xdebugActionResult(version, true, mode)
+}
+
+// xdebugNeedsOutputDir returns true when the xdebug mode produces output files
+// (trace or profile) and we should set xdebug.output_dir to the current directory.
+func xdebugNeedsOutputDir(mode string) bool {
+	return mode == "trace" || mode == "profile"
 }
 
 // xdebugActionResult outputs the result of an xdebug action (enable/disable/mode change).
@@ -295,6 +307,9 @@ func xdebugActionResult(phpVersion string, enabled bool, mode string) {
 			"enabled":    enabled,
 			"mode":       mode,
 		}
+		if xdebugNeedsOutputDir(mode) {
+			result["outputDir"] = "."
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(result)
@@ -302,6 +317,9 @@ func xdebugActionResult(phpVersion string, enabled bool, mode string) {
 	}
 	if enabled {
 		fmt.Printf("  ✅ xdebug enabled (mode: %s)\n", mode)
+		if xdebugNeedsOutputDir(mode) {
+			fmt.Println("  📂 output_dir set to current directory (.)")
+		}
 	} else {
 		fmt.Println("  ⏸️  xdebug disabled")
 	}

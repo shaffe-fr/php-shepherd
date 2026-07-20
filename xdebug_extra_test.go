@@ -121,6 +121,95 @@ func TestXdebugStatus_NoXdebugLines(t *testing.T) {
 	}
 }
 
+func TestXdebugNeedsOutputDir(t *testing.T) {
+	tests := []struct {
+		mode string
+		want bool
+	}{
+		{"trace", true},
+		{"profile", true},
+		{"debug", false},
+		{"coverage", false},
+		{"off", false},
+		{"debug,coverage", false},
+	}
+	for _, tt := range tests {
+		if got := xdebugNeedsOutputDir(tt.mode); got != tt.want {
+			t.Errorf("xdebugNeedsOutputDir(%q) = %v, want %v", tt.mode, got, tt.want)
+		}
+	}
+}
+
+func TestXdebugActionResult_JSONIncludesOutputDir(t *testing.T) {
+	tests := []struct {
+		mode          string
+		expectKey     bool
+		expectedValue string
+	}{
+		{"trace", true, "."},
+		{"profile", true, "."},
+		{"debug", false, ""},
+		{"coverage", false, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			oldStdout := os.Stdout
+			r, w, _ := os.Pipe()
+			os.Stdout = w
+
+			oldJsonOutput := jsonOutput
+			jsonOutput = true
+			xdebugActionResult("8.4", true, tt.mode)
+			jsonOutput = oldJsonOutput
+
+			_ = w.Close()
+			os.Stdout = oldStdout
+
+			var buf bytes.Buffer
+			_, _ = buf.ReadFrom(r)
+
+			var result map[string]interface{}
+			if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+				t.Fatalf("invalid JSON: %v\noutput: %s", err, buf.String())
+			}
+
+			val, exists := result["outputDir"]
+			if tt.expectKey && !exists {
+				t.Errorf("expected outputDir key in JSON for mode %q", tt.mode)
+			}
+			if !tt.expectKey && exists {
+				t.Errorf("unexpected outputDir key in JSON for mode %q", tt.mode)
+			}
+			if tt.expectKey && val != tt.expectedValue {
+				t.Errorf("outputDir = %v, want %q", val, tt.expectedValue)
+			}
+		})
+	}
+}
+
+func TestXdebugActionResult_HumanOutputDir(t *testing.T) {
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	oldJsonOutput := jsonOutput
+	jsonOutput = false
+	xdebugActionResult("8.4", true, "trace")
+	jsonOutput = oldJsonOutput
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	output := buf.String()
+
+	if !strings.Contains(output, "output_dir") {
+		t.Error("expected human output to mention output_dir for trace mode")
+	}
+}
+
 func TestDoctorCheckAliases(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("USERPROFILE", root)
