@@ -140,6 +140,70 @@ func TestXdebugNeedsOutputDir(t *testing.T) {
 	}
 }
 
+func TestXdebugRunHelp(t *testing.T) {
+	result := runShp(t, []string{"xdebug", "run", "--help"}, nil)
+	if result.ExitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\nstderr: %s", result.ExitCode, result.Stderr)
+	}
+	if !strings.Contains(result.Stdout, "shp xdebug run <mode> -- <command...>") {
+		t.Errorf("expected usage line in help output, got: %s", result.Stdout)
+	}
+}
+
+func TestXdebugRunHelp_JSON(t *testing.T) {
+	result := runShp(t, []string{"--json", "xdebug", "run", "--help"}, nil)
+	if result.ExitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\nstderr: %s", result.ExitCode, result.Stderr)
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Stdout), &obj); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, result.Stdout)
+	}
+	if obj["command"] != "xdebug run" {
+		t.Errorf("expected command='xdebug run', got %v", obj["command"])
+	}
+}
+
+func TestXdebugRunInvalidMode(t *testing.T) {
+	result := runShp(t, []string{"xdebug", "run", "invalid", "--", "php", "-v"}, nil)
+	if result.ExitCode == 0 {
+		t.Error("expected non-zero exit for invalid mode")
+	}
+	if !strings.Contains(result.Stderr, "invalid mode") {
+		t.Errorf("expected 'invalid mode' in stderr, got: %s", result.Stderr)
+	}
+}
+
+func TestXdebugRunMissingSeparator(t *testing.T) {
+	result := runShp(t, []string{"xdebug", "run", "trace", "php", "-v"}, nil)
+	if result.ExitCode == 0 {
+		t.Error("expected non-zero exit when -- is missing")
+	}
+	if !strings.Contains(result.Stderr, "missing command after '--'") {
+		t.Errorf("expected separator error in stderr, got: %s", result.Stderr)
+	}
+}
+
+func TestXdebugRunMissingCommand(t *testing.T) {
+	result := runShp(t, []string{"xdebug", "run", "trace", "--"}, nil)
+	if result.ExitCode == 0 {
+		t.Error("expected non-zero exit when command is missing after --")
+	}
+	if !strings.Contains(result.Stderr, "missing command after '--'") {
+		t.Errorf("expected missing command error in stderr, got: %s", result.Stderr)
+	}
+}
+
+func TestXdebugRunOffModeRejected(t *testing.T) {
+	result := runShp(t, []string{"xdebug", "run", "off", "--", "php", "-v"}, nil)
+	if result.ExitCode == 0 {
+		t.Error("expected non-zero exit for 'off' mode in run")
+	}
+	if !strings.Contains(result.Stderr, "invalid mode") {
+		t.Errorf("expected invalid mode error for 'off', got: %s", result.Stderr)
+	}
+}
+
 func TestXdebugActionResult_JSONIncludesOutputDir(t *testing.T) {
 	tests := []struct {
 		mode          string

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -99,6 +100,14 @@ func cmdXdebug() {
 		fmt.Println("  trace           Enable with function trace mode")
 		fmt.Println("  off             Disable xdebug")
 		fmt.Println("  status          Show current xdebug state")
+		fmt.Println("  run <mode> -- <command...>")
+		fmt.Println("                  Stateless: run a single command with xdebug (one-off)")
+		return
+	}
+
+	// Dispatch "run" subcommand before resolving PHP for ini-based modes
+	if mode == "run" {
+		cmdXdebugRun()
 		return
 	}
 
@@ -409,4 +418,141 @@ func xdebugStatus(lines []string, version string) {
 	} else {
 		fmt.Println("  ⏸️  xdebug is disabled")
 	}
+}
+
+// cmdXdebugRun executes a PHP command with xdebug enabled via -d flags.
+// Stateless: xdebug is injected for that invocation only, config is never touched.
+//
+// Usage: shp xdebug run <mode> -- <command...>
+//
+// Examples:
+//
+//	shp xdebug run trace -- php artisan migrate
+//	shp xdebug run profile -- php artisan test
+//	shp xdebug run debug -- php script.php
+func cmdXdebugRun() {
+	// shp xdebug run <mode> -- <command...>
+	// os.Args[0]=shp [1]=xdebug [2]=run [3]=mode ... [sep]=-- [cmd...]
+	if len(os.Args) < 4 || os.Args[3] == "-h" || os.Args[3] == "--help" {
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(map[string]interface{}{
+				"command":     "xdebug run",
+				"usage":       "shp xdebug run <mode> -- <command...>",
+				"description": "Stateless: run a command with xdebug (one-off, no config change)",
+			})
+			return
+		}
+		fmt.Println("Usage: shp xdebug run <mode> -- <command...>")
+		fmt.Println()
+		fmt.Println("Stateless: run a command with xdebug enabled (one-off, no config change).")
+		fmt.Println()
+		fmt.Println("Modes: debug, coverage, profile, trace")
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  shp xdebug run trace -- php artisan migrate")
+		fmt.Println("  shp xdebug run profile -- php artisan test")
+		fmt.Println("  shp xdebug run debug -- php script.php")
+		return
+	}
+
+	mode := strings.ToLower(os.Args[3])
+
+	// Validate mode (off and toggle don't make sense here)
+	validRunModes := map[string]bool{
+		"debug":          true,
+		"coverage":       true,
+		"debug,coverage": true,
+		"coverage,debug": true,
+		"profile":        true,
+		"trace":          true,
+	}
+	if !validRunModes[mode] {
+		fmt.Fprintf(os.Stderr, "Error: invalid mode %q for xdebug run\n", mode)
+		fmt.Fprintf(os.Stderr, "Valid modes: debug, coverage, debug,coverage, profile, trace\n")
+		os.Exit(1)
+	}
+
+	// Find the "--" separator
+	sepIdx := -1
+	for i := 4; i < len(os.Args); i++ {
+		if os.Args[i] == "--" {
+			sepIdx = i
+			break
+		}
+	}
+	if sepIdx == -1 || sepIdx >= len(os.Args)-1 {
+		fmt.Fprintf(os.Stderr, "Error: missing command after '--'\n")
+		fmt.Fprintf(os.Stderr, "Usage: shp xdebug run <mode> -- <command...>\n")
+		os.Exit(1)
+	}
+
+	cmdArgs := os.Args[sepIdx+1:]
+
+	// Resolve PHP
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	phpPath, version, err := resolveCurrentPHP(cwd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if version == "" {
+		fmt.Fprintf(os.Stderr, "Error: could not determine PHP version\n")
+		os.Exit(1)
+	}
+
+	// Verify xdebug DLL exists
+	dllPath := xdebugDLLPath(version)
+	if _, err := os.Stat(dllPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: xdebug DLL not found at %s\n", dllPath)
+		os.Exit(1)
+	}
+
+	// Build xdebug -d flags
+	xdebugFlags := []string{
+		"-d", "zend_extension=" + dllPath,
+		"-d", "xdebug.mode=" + mode,
+		"-d", "xdebug.start_with_request=yes",
+	}
+	if xdebugNeedsOutputDir(mode) {
+		xdebugFlags = append(xdebugFlags, "-d", "xdebug.output_dir=.")
+	}
+
+	// Determine how to run the command
+	cmdName := strings.ToLower(cmdArgs[0])
+	extDir := filepath.Join(filepath.Dir(phpPath), "ext")
+
+	var execArgs []string
+	switch cmdName {
+	case "php", "php.exe":
+		// Direct PHP invocation: inject xdebug flags before user args
+		execArgs = append(xdebugFlags, "-d", "extension_dir="+extDir)
+		execArgs = append(execArgs, cmdArgs[1:]...)
+	case "composer", "composer.exe":
+		// Composer: run via PHP with xdebug flags
+		composerPhar := filepath.Join(herdHome(), "composer.phar")
+		execArgs = append(xdebugFlags, "-d", "extension_dir="+extDir)
+		execArgs = append(execArgs, composerPhar)
+		execArgs = append(execArgs, cmdArgs[1:]...)
+	default:
+		// Other commands: cannot inject -d flags, run with PATH override
+		// and xdebug env vars as a best-effort fallback
+		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+		phpBinDir := filepath.Dir(phpPath)
+		env := os.Environ()
+		env = append(env, "PATH="+phpBinDir+";"+os.Getenv("PATH"))
+		env = append(env, "XDEBUG_MODE="+mode)
+		cmd.Env = env
+		execCmdResult(cmd, map[string]interface{}{"phpVersion": version, "mode": mode})
+		return
+	}
+
+	cmd := exec.Command(phpPath, execArgs...)
+	execCmdResult(cmd, map[string]interface{}{"phpVersion": version, "mode": mode})
 }

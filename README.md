@@ -72,7 +72,7 @@ That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in 
 | `shp current`        | Print the resolved PHP version                                       |
 | `shp list`           | List available PHP versions                                          |
 | `shp status`         | Show configuration overview                                          |
-| `shp xdebug <cmd>`   | Toggle/configure xdebug (`on`, `off`, `debug`, `coverage`, `toggle`) |
+| `shp xdebug <cmd>`   | Manage xdebug (`on`, `off`, `toggle`, `profile`, `trace`, `run`)     |
 | `shp ext add <name>` | Install a PHP extension (DLL + deps + ini)                           |
 | `shp ext list`       | List installed extensions                                            |
 | `shp ext remove <n>` | Remove an installed extension                                        |
@@ -99,11 +99,25 @@ Toggle xdebug without editing `php.ini` manually:
 ```powershell
 shp xdebug on          # enable (mode=debug)
 shp xdebug coverage    # switch to coverage mode
+shp xdebug profile     # enable profiling (sets output_dir to .)
+shp xdebug trace       # enable function tracing (sets output_dir to .)
 shp xdebug off         # disable
 shp xdebug toggle      # quick on/off
 ```
 
 Works on the PHP version resolved for the current project.
+
+### Stateless xdebug
+
+Profile or trace a single command without touching your config — one-off, no side effects:
+
+```powershell
+shp xdebug run trace -- php artisan migrate
+shp xdebug run profile -- php artisan test
+shp xdebug run debug -- php script.php
+```
+
+Xdebug is injected for that invocation only, then gone.
 
 ## Running with a different version
 
