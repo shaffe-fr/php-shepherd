@@ -2,8 +2,10 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -85,7 +87,9 @@ func TestRewriteXdebugArgs(t *testing.T) {
 		}
 	}
 	if createdDir {
-		defer func() { _ = os.RemoveAll(filepath.Join(os.Getenv("PROGRAMFILES"), "Herd", "resources", "app.asar.unpacked", "resources", "bin", "xdebug")) }()
+		defer func() {
+			_ = os.RemoveAll(filepath.Join(os.Getenv("PROGRAMFILES"), "Herd", "resources", "app.asar.unpacked", "resources", "bin", "xdebug"))
+		}()
 	}
 
 	tests := []struct {
@@ -647,4 +651,53 @@ func sliceEqual(a, b []string) bool {
 		return true
 	}
 	return slices.Equal(a, b)
+}
+
+func TestParentProcessName(t *testing.T) {
+	name := parentProcessName()
+	if name == "" {
+		t.Fatal("parentProcessName() returned empty — expected the name of the test runner process")
+	}
+	// On Windows the parent should be an .exe
+	if !strings.HasSuffix(strings.ToLower(name), ".exe") {
+		t.Errorf("expected parent process name ending in .exe, got %q", name)
+	}
+	t.Logf("parentProcessName() = %q", name)
+}
+
+// TestParentProcessName_FromBinary verifies that the compiled binary exercises
+// parentProcessName() without crashing. The binary calls isLaunchedFromExplorer()
+// (which calls parentProcessName()) during the install-prompt flow. Running
+// "shp version" with --no-interactive ensures the full startup path runs,
+// including the parent process detection logic.
+func TestParentProcessName_FromBinary(t *testing.T) {
+	if testBinary == "" {
+		t.Skip("testBinary not set (TestMain did not run)")
+	}
+
+	profile := fakeHerd(t, []string{"8.4"})
+
+	// Ensure shims exist so the binary doesn't enter the install prompt
+	shimBin := filepath.Join(profile, ".config", "shepherd", "bin")
+	_ = os.MkdirAll(shimBin, 0755)
+	for _, name := range []string{"php.exe", "composer.exe", "shp.exe"} {
+		_ = os.WriteFile(filepath.Join(shimBin, name), []byte("fake"), 0755)
+	}
+
+	cmd := exec.Command(testBinary, "--no-interactive", "version")
+	cmd.Env = []string{
+		"SystemRoot=" + os.Getenv("SystemRoot"),
+		"PATH=" + os.Getenv("PATH"),
+		"PROGRAMFILES=" + os.Getenv("PROGRAMFILES"),
+		"USERPROFILE=" + profile,
+	}
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("binary crashed: %v\noutput: %s", err, out)
+	}
+	if !strings.Contains(string(out), "shp ") {
+		t.Errorf("unexpected output from binary: %s", out)
+	}
+	t.Logf("binary output: %s", strings.TrimSpace(string(out)))
 }

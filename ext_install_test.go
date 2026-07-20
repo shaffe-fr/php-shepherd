@@ -289,3 +289,52 @@ func TestAddExtensionToIni_MissingFile(t *testing.T) {
 		t.Error("expected error for missing file")
 	}
 }
+
+func TestExtractZipFile_Success(t *testing.T) {
+	// Create a zip with a single entry
+	zipPath := createTestZip(t, map[string][]byte{
+		"hello.dll": []byte("hello-content"),
+	})
+
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+
+	dest := filepath.Join(t.TempDir(), "hello.dll")
+	if err := extractZipFile(r.File[0], dest); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "hello-content" {
+		t.Errorf("got %q, want %q", string(data), "hello-content")
+	}
+}
+
+func TestExtractZipFile_CreateError(t *testing.T) {
+	// Create a zip with a single entry
+	zipPath := createTestZip(t, map[string][]byte{
+		"test.dll": []byte("data"),
+	})
+
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+
+	// Attempt to extract to a non-existent directory → os.Create fails
+	dest := filepath.Join(t.TempDir(), "nonexistent", "sub", "test.dll")
+	err = extractZipFile(r.File[0], dest)
+	if err == nil {
+		t.Fatal("expected error when dest directory does not exist")
+	}
+	if !strings.Contains(err.Error(), "creating") {
+		t.Errorf("error should mention 'creating', got: %v", err)
+	}
+}

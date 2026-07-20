@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -246,26 +245,30 @@ func isInstalled() bool {
 }
 
 // parentProcessName returns the executable name of the parent process (e.g. "explorer.exe").
+//
+// Uses OpenProcess + QueryFullProcessImageNameW to query only the parent PID
+// directly, avoiding CreateToolhelp32Snapshot which enumerates all processes
+// and is commonly flagged by AV heuristics as reconnaissance behavior.
 func parentProcessName() string {
 	ppid := uint32(os.Getppid())
 
-	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	// PROCESS_QUERY_LIMITED_INFORMATION (0x1000) is sufficient for QueryFullProcessImageName
+	// and does not require elevation.
+	handle, err := windows.OpenProcess(0x1000, false, ppid)
 	if err != nil {
 		return ""
 	}
-	defer func() { _ = windows.CloseHandle(snap) }()
+	defer func() { _ = windows.CloseHandle(handle) }()
 
-	var entry windows.ProcessEntry32
-	entry.Size = uint32(unsafe.Sizeof(entry))
-
-	err = windows.Process32First(snap, &entry)
-	for err == nil {
-		if entry.ProcessID == ppid {
-			return windows.UTF16ToString(entry.ExeFile[:])
-		}
-		err = windows.Process32Next(snap, &entry)
+	buf := make([]uint16, 260)
+	size := uint32(len(buf))
+	// QueryFullProcessImageNameW: dwFlags=0 means Win32 path format.
+	err = windows.QueryFullProcessImageName(handle, 0, &buf[0], &size)
+	if err != nil {
+		return ""
 	}
-	return ""
+	fullPath := windows.UTF16ToString(buf[:size])
+	return filepath.Base(fullPath)
 }
 
 // isLaunchedFromExplorer returns true if the binary was double-clicked from Explorer.
