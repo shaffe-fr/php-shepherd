@@ -80,6 +80,7 @@ That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in 
 | `shp doctor`         | Diagnose common setup issues                                         |
 | `shp self-update`    | Update to the latest release (SHA256-verified)                       |
 | `shp install`        | Install shims and configure PATH                                     |
+| `shp guard <cmd>`    | Manage the optional PATH Guard (`enable`, `disable`, `status`)       |
 | `shp uninstall`      | Remove shims and restore PATH                                        |
 | `shp version`        | Show current version                                                 |
 
@@ -177,6 +178,24 @@ shp self-update
 ```
 
 Downloads the latest release, verifies SHA256, and replaces all shims. Releases are signed with [cosign](https://docs.sigstore.dev) — see [SECURITY.md](SECURITY.md).
+
+## PATH Guard (opt-in)
+
+Herd updates can silently reorder your User PATH, putting its own `bin` directory back before Shepherd. The PATH Guard is a lightweight background process that watches `HKCU\Environment\Path` and restores the correct order automatically.
+
+```powershell
+shp guard enable    # create a per-user scheduled task (runs at login)
+shp guard status    # check if the guard is active
+shp guard disable   # remove the task
+```
+
+The guard:
+- Runs with standard user privileges, no admin required
+- Uses no network access
+- Is proposed during `shp install` (default: No)
+- Can be enabled non-interactively: `shp install --enable-path-guard`
+- Is automatically stopped and removed by `shp uninstall`
+- Is refreshed when you run `shp self-update`
 
 ## Multicall binary
 

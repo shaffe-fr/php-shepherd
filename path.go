@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -41,6 +42,81 @@ func setUserPath(path string, valType uint32) error {
 		return key.SetExpandStringValue("Path", path)
 	}
 	return key.SetStringValue("Path", path)
+}
+
+// samePathEntry compares PATH entries without case, surrounding whitespace,
+// or a trailing directory separator. Windows path comparisons are case-insensitive.
+func samePathEntry(left, right string) bool {
+	clean := func(entry string) string {
+		return strings.TrimRight(strings.TrimSpace(entry), `\/`)
+	}
+	return strings.EqualFold(clean(left), clean(right))
+}
+
+// movePathEntryFirst returns PATH with entry as its sole first occurrence.
+// Empty entries are removed because they are ambiguous in a Windows PATH.
+func movePathEntryFirst(path, entry string) (string, bool) {
+	filtered := make([]string, 0)
+	for _, current := range strings.Split(path, ";") {
+		if strings.TrimSpace(current) == "" || samePathEntry(current, entry) {
+			continue
+		}
+		filtered = append(filtered, current)
+	}
+
+	newPath := strings.Join(append([]string{entry}, filtered...), ";")
+	return newPath, newPath != path
+}
+
+// removePathEntry removes all occurrences of entry from PATH.
+func removePathEntry(path, entry string) (string, bool) {
+	filtered := make([]string, 0)
+	for _, current := range strings.Split(path, ";") {
+		if strings.TrimSpace(current) == "" || samePathEntry(current, entry) {
+			continue
+		}
+		filtered = append(filtered, current)
+	}
+
+	newPath := strings.Join(filtered, ";")
+	return newPath, newPath != path
+}
+
+// ensureShepherdFirstInUserPath makes the Shepherd shim directory the first
+// User PATH entry. It only writes the registry when a change is required.
+func ensureShepherdFirstInUserPath() (changed bool, err error) {
+	userPath, valType, err := getUserPath()
+	if err != nil {
+		return false, err
+	}
+
+	newPath, changed := movePathEntryFirst(userPath, shimDir())
+	if !changed {
+		return false, nil
+	}
+	if err := setUserPath(newPath, valType); err != nil {
+		return false, err
+	}
+	broadcastSettingChange()
+	return true, nil
+}
+
+// removeShepherdFromUserPath removes the Shepherd shim directory from User PATH.
+func removeShepherdFromUserPath() (changed bool, err error) {
+	userPath, valType, err := getUserPath()
+	if err != nil {
+		return false, err
+	}
+
+	newPath, changed := removePathEntry(userPath, shimDir())
+	if !changed {
+		return false, nil
+	}
+	if err := setUserPath(newPath, valType); err != nil {
+		return false, err
+	}
+	broadcastSettingChange()
+	return true, nil
 }
 
 // broadcastSettingChange sends WM_SETTINGCHANGE to all top-level windows

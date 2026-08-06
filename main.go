@@ -325,6 +325,15 @@ func main() {
 
 	// Handle subcommands (only when invoked as shp)
 	if isShepherd {
+		// The scheduled task invokes this hidden command. Handle it before update
+		// checks or interactive detection: it is a background, long-running guard.
+		if len(os.Args) > 1 && os.Args[1] == pathGuardInternalCommand {
+			if err := runPathGuard(); err != nil {
+				os.Exit(1)
+			}
+			return
+		}
+
 		// Passive update check: notify if a newer version is known, and refresh
 		// the cache in the background if stale. Only in interactive, non-quiet,
 		// non-json mode to avoid polluting scripts/CI output.
@@ -347,6 +356,9 @@ func main() {
 				return
 			case "install":
 				cmdInstall()
+				return
+			case "guard":
+				cmdPathGuard()
 				return
 			case "uninstall":
 				cmdUninstall()
@@ -438,6 +450,7 @@ func main() {
 					{Name: "ext", Description: "Manage PHP extensions (add, list, remove)"},
 					{Name: "reverb", Description: "Show Reverb status and .env configuration"},
 					{Name: "install", Description: "Install php.exe and composer.exe shims and configure PATH"},
+					{Name: "guard", Description: "Manage the optional PATH Guard that keeps Shepherd ahead of Herd"},
 					{Name: "uninstall", Description: "Remove shims and restore PATH"},
 					{Name: "doctor", Description: "Diagnose common issues with Shepherd setup"},
 					{Name: "self-update", Description: "Update Shepherd to the latest version"},
@@ -469,6 +482,7 @@ func main() {
 		fmt.Println("  ext         Manage PHP extensions (add, list, remove)")
 		fmt.Println("  reverb      Show Reverb status and .env configuration")
 		fmt.Println("  install     Install php.exe and composer.exe shims and configure PATH")
+		fmt.Println("  guard       Manage the optional PATH Guard that keeps Shepherd ahead of Herd")
 		fmt.Println("  uninstall   Remove shims and restore PATH")
 		fmt.Println("  doctor      Diagnose common issues with Shepherd setup")
 		fmt.Println("  self-update Update Shepherd to the latest version")
@@ -1203,11 +1217,15 @@ func killShimProcesses(dir string) {
 func cmdInstall() {
 	dir := shimDir()
 
-	// Parse --force flag
+	// Parse installation flags.
 	force := false
+	enableGuard := false
 	for _, arg := range os.Args[2:] {
-		if arg == "--force" || arg == "-f" {
+		switch arg {
+		case "--force", "-f":
 			force = true
+		case "--enable-path-guard":
+			enableGuard = true
 		}
 	}
 
@@ -1261,53 +1279,51 @@ func cmdInstall() {
 		shims = append(shims, shimResult{Name: name, Path: dest, Status: "installed"})
 	}
 
-	// Configure User PATH
-	userPath, valType, err := getUserPath()
+	// Configure User PATH. This does not touch shell profiles; the PATH Guard
+	// remains an explicit opt-in for people who want ongoing repair.
+	pathUpdated, err := ensureShepherdFirstInUserPath()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading User PATH: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error configuring User PATH: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Remove any existing entry for our shim dir, then prepend
-	entries := strings.Split(userPath, ";")
-	var filtered []string
-	for _, e := range entries {
-		if !strings.EqualFold(strings.TrimRight(e, `\`), strings.TrimRight(dir, `\`)) && e != "" {
-			filtered = append(filtered, e)
-		}
-	}
-	newPath := dir + ";" + strings.Join(filtered, ";")
 
 	// Windows has a practical PATH limit. Warn if we're approaching it.
-	const maxPathLen = 2047
-	if len(newPath) > maxPathLen {
-		fmt.Fprintf(os.Stderr, "Warning: User PATH length (%d chars) exceeds the safe limit (%d).\n", len(newPath), maxPathLen)
-		fmt.Fprintf(os.Stderr, "  Some programs may not see the full PATH. Consider removing unused entries.\n")
+	if configuredPath, _, pathErr := getUserPath(); pathErr == nil {
+		const maxPathLen = 2047
+		if len(configuredPath) > maxPathLen {
+			fmt.Fprintf(os.Stderr, "Warning: User PATH length (%d chars) exceeds the safe limit (%d).\n", len(configuredPath), maxPathLen)
+			fmt.Fprintf(os.Stderr, "  Some programs may not see the full PATH. Consider removing unused entries.\n")
+		}
 	}
-
-	if err := setUserPath(newPath, valType); err != nil {
-		fmt.Fprintf(os.Stderr, "Error setting User PATH: %v\n", err)
-		os.Exit(1)
-	}
-	broadcastSettingChange()
 
 	logInfo("\n")
-	logInfo("  ✓ Added %s to the beginning of User PATH\n", dir)
+	if pathUpdated {
+		logInfo("  ✓ Added %s to the beginning of User PATH\n", dir)
+	} else {
+		logInfo("  • %s is already first in User PATH\n", dir)
+	}
 
-	// Patch PowerShell profile if it reorders PATH without including Shepherd
-	profilePatched := patchPowerShellProfile(dir)
-	if profilePatched {
-		logInfo("  ✓ Patched PowerShell profile to source %s\n", shepherdProfilePath())
-		logInfo("    (ensures Shepherd stays first in PATH; reversed by 'shp uninstall')\n")
+	guardEnabled := pathGuardEnabled()
+	guardError := ""
+	if enableGuard || (!guardEnabled && !jsonOutput && isInteractive() && confirmPathGuard()) {
+		if err := enablePathGuard(); err != nil {
+			guardError = err.Error()
+			fmt.Fprintf(os.Stderr, "Warning: PATH Guard was not enabled: %v\n", err)
+		} else {
+			guardEnabled = true
+			logInfo("  ✓ PATH Guard enabled (%s)\n", pathGuardTaskName())
+		}
+	} else if !guardEnabled && !enableGuard && !jsonOutput && isInteractive() {
+		logInfo("  • PATH Guard remains disabled. Enable it later with `shp guard enable`.\n")
 	}
 
 	if jsonOutput {
 		result := map[string]interface{}{
-			"shimDir":        dir,
-			"shims":          shims,
-			"pathUpdated":    true,
-			"profilePatched": profilePatched,
-			"profileSnippet": shepherdProfilePath(),
+			"shimDir":          dir,
+			"shims":            shims,
+			"pathUpdated":      pathUpdated,
+			"pathGuardEnabled": guardEnabled,
+			"pathGuardError":   nilIfEmpty(guardError),
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -1323,6 +1339,15 @@ func cmdInstall() {
 func cmdUninstall() {
 	dir := shimDir()
 
+	guardRemoved, err := disablePathGuard()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error removing PATH Guard: %v\n", err)
+		os.Exit(1)
+	}
+	if guardRemoved {
+		logInfo("  ✓ PATH Guard disabled\n")
+	}
+
 	// Remove shim directory
 	shimRemoved := false
 	if err := os.RemoveAll(dir); err != nil {
@@ -1333,37 +1358,24 @@ func cmdUninstall() {
 	}
 
 	// Remove from User PATH
-	userPath, valType, err := getUserPath()
+	pathRestored, err := removeShepherdFromUserPath()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading User PATH: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error restoring User PATH: %v\n", err)
 		os.Exit(1)
 	}
 
-	entries := strings.Split(userPath, ";")
-	var filtered []string
-	for _, e := range entries {
-		if !strings.EqualFold(strings.TrimRight(e, `\`), strings.TrimRight(dir, `\`)) && e != "" {
-			filtered = append(filtered, e)
-		}
-	}
-	newPath := strings.Join(filtered, ";")
-
-	if err := setUserPath(newPath, valType); err != nil {
-		fmt.Fprintf(os.Stderr, "Error setting User PATH: %v\n", err)
-		os.Exit(1)
-	}
-	broadcastSettingChange()
-
-	// Remove PowerShell profile integration
+	// Remove PowerShell profile integration from installations created by older
+	// Shepherd versions. New installations leave user shell profiles untouched.
 	unpatchPowerShellProfile()
 
 	if jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(map[string]interface{}{
-			"shimDir":      dir,
-			"shimRemoved":  shimRemoved,
-			"pathRestored": true,
+			"shimDir":          dir,
+			"shimRemoved":      shimRemoved,
+			"pathRestored":     pathRestored,
+			"pathGuardRemoved": guardRemoved,
 		})
 		return
 	}
@@ -1432,6 +1444,7 @@ func cmdStatus() {
 	if _, err := os.Stat(composerShim); err == nil {
 		composerShimInstalled = true
 	}
+	guardEnabled := pathGuardEnabled()
 
 	// PATH check
 	pathOK := false
@@ -1467,6 +1480,7 @@ func cmdStatus() {
 			"composerShimInstalled": composerShimInstalled,
 			"shimDir":               dir,
 			"pathConfigured":        pathOK,
+			"pathGuardEnabled":      guardEnabled,
 			"shepherdVersion":       version,
 		}
 		enc := json.NewEncoder(os.Stdout)
@@ -1506,6 +1520,11 @@ func cmdStatus() {
 		fmt.Printf("  ✓ composer.exe shim installed at %s\n", composerShim)
 	} else {
 		fmt.Printf("  ✗ composer.exe shim not found at %s\n", composerShim)
+	}
+	if guardEnabled {
+		fmt.Printf("  ✓ PATH Guard enabled (%s)\n", pathGuardTaskName())
+	} else {
+		fmt.Println("  • PATH Guard disabled (enable it with `shp guard enable`)")
 	}
 
 	fmt.Println()

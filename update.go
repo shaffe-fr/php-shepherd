@@ -331,6 +331,21 @@ func cmdSelfUpdate() {
 		}
 	}
 
+	// The PATH Guard runs from a dedicated executable so it cannot block normal
+	// shim updates. Refresh it after the shims are current, if the user opted in.
+	pathGuardRefreshed := false
+	if pathGuardEnabled() {
+		if err := refreshPathGuardExecutable(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Shepherd updated but PATH Guard could not be refreshed: %v\n", err)
+			fmt.Fprintln(os.Stderr, "Run `shp guard enable` to repair it.")
+		} else {
+			pathGuardRefreshed = true
+			if !jsonOutput {
+				fmt.Println("  ✓ Refreshed PATH Guard")
+			}
+		}
+	}
+
 	// Update the cache so the "Update available" notice doesn't linger.
 	writeUpdateCache(updateCheckCache{
 		LatestVersion: latestVersion,
@@ -341,11 +356,12 @@ func cmdSelfUpdate() {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(map[string]interface{}{
-			"status":          "updated",
-			"previousVersion": currentVersion,
-			"newVersion":      latestVersion,
-			"changelog":       release.Body,
-			"releaseUrl":      release.HTMLURL,
+			"status":             "updated",
+			"previousVersion":    currentVersion,
+			"newVersion":         latestVersion,
+			"pathGuardRefreshed": pathGuardRefreshed,
+			"changelog":          release.Body,
+			"releaseUrl":         release.HTMLURL,
 		})
 	} else {
 		fmt.Printf("\n✅ Shepherd updated to %s\n", latestVersion)
