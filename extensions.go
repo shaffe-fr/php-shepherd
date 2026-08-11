@@ -11,8 +11,9 @@ import (
 // extSource defines where and how to download an extension.
 type extSource struct {
 	// urlPattern builds the download URL.
-	// Available placeholders: {version}, {phpMajMin}, {ts}, {vs}, {arch}
-	// phpMajMin is e.g. "84" for PHP 8.4.
+	// Available placeholders: {version}, {phpDotVer}, {phpMajMin}, {ts}, {vs}, {arch}
+	// phpDotVer is e.g. "8.4" for PHP 8.4 (used by PECL filenames).
+	// phpMajMin is e.g. "84" for PHP 8.4 (digits only, no dot).
 	urlPattern string
 
 	// depsURLPattern is an optional secondary download for support libraries
@@ -45,7 +46,7 @@ var extensionRegistry = map[string]*extDefinition{
 		name:      "imagick",
 		directive: "extension",
 		source: extSource{
-			urlPattern:     "https://downloads.php.net/~windows/pecl/releases/imagick/{version}/php_imagick-{version}-{phpMajMin}-{ts}-{vs}-{arch}.zip",
+			urlPattern:     "https://downloads.php.net/~windows/pecl/releases/imagick/{version}/php_imagick-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
 			depsURLPattern: "https://windows.php.net/downloads/pecl/deps/ImageMagick-7.1.1-41-{vs}-{arch}.zip",
 		},
 	},
@@ -53,21 +54,21 @@ var extensionRegistry = map[string]*extDefinition{
 		name:      "redis",
 		directive: "extension",
 		source: extSource{
-			urlPattern: "https://downloads.php.net/~windows/pecl/releases/redis/{version}/php_redis-{version}-{phpMajMin}-{ts}-{vs}-{arch}.zip",
+			urlPattern: "https://downloads.php.net/~windows/pecl/releases/redis/{version}/php_redis-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
 		},
 	},
 	"igbinary": {
 		name:      "igbinary",
 		directive: "extension",
 		source: extSource{
-			urlPattern: "https://downloads.php.net/~windows/pecl/releases/igbinary/{version}/php_igbinary-{version}-{phpMajMin}-{ts}-{vs}-{arch}.zip",
+			urlPattern: "https://downloads.php.net/~windows/pecl/releases/igbinary/{version}/php_igbinary-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
 		},
 	},
 	"sqlsrv": {
 		name:      "sqlsrv",
 		directive: "extension",
 		source: extSource{
-			urlPattern: "https://downloads.php.net/~windows/pecl/releases/sqlsrv/{version}/php_sqlsrv-{version}-{phpMajMin}-{ts}-{vs}-{arch}.zip",
+			urlPattern: "https://downloads.php.net/~windows/pecl/releases/sqlsrv/{version}/php_sqlsrv-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
 		},
 		wingetDeps: []string{"Microsoft.ODBCDriver.18.ForSQLServer"},
 	},
@@ -75,7 +76,7 @@ var extensionRegistry = map[string]*extDefinition{
 		name:      "pdo_sqlsrv",
 		directive: "extension",
 		source: extSource{
-			urlPattern: "https://downloads.php.net/~windows/pecl/releases/pdo_sqlsrv/{version}/php_pdo_sqlsrv-{version}-{phpMajMin}-{ts}-{vs}-{arch}.zip",
+			urlPattern: "https://downloads.php.net/~windows/pecl/releases/pdo_sqlsrv/{version}/php_pdo_sqlsrv-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
 		},
 		wingetDeps: []string{"Microsoft.ODBCDriver.18.ForSQLServer"},
 	},

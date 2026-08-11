@@ -293,14 +293,14 @@ func TestBuildExtURL(t *testing.T) {
 		want       string
 	}{
 		{
-			name:       "redis extension URL",
-			pattern:    "https://downloads.php.net/~windows/pecl/releases/redis/{version}/php_redis-{version}-{phpMajMin}-{ts}-{vs}-{arch}.zip",
+			name:       "redis extension URL with phpDotVer",
+			pattern:    "https://downloads.php.net/~windows/pecl/releases/redis/{version}/php_redis-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
 			version:    "6.0.2",
 			phpVersion: "8.4",
 			ts:         "nts",
 			vs:         "vs17",
 			arch:       "x64",
-			want:       "https://downloads.php.net/~windows/pecl/releases/redis/6.0.2/php_redis-6.0.2-84-nts-vs17-x64.zip",
+			want:       "https://downloads.php.net/~windows/pecl/releases/redis/6.0.2/php_redis-6.0.2-8.4-nts-vs17-x64.zip",
 		},
 		{
 			name:       "PHP 8.10 uses three-digit phpMajMin",
