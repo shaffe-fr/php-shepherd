@@ -51,6 +51,61 @@ changelog:
       - "Merge pull request"
       - "Merge branch"
 
+scoops:
+  - name: shepherd
+    repository:
+      owner: shaffe-fr
+      name: scoop-shepherd
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    homepage: https://github.com/shaffe-fr/php-shepherd
+    description: Per-project PHP version switching on Windows for Laravel Herd
+    license: MIT
+
+chocolateys:
+  - name: shepherd
+    owners: shaffe-fr
+    authors: shaffe-fr
+    project_url: https://github.com/shaffe-fr/php-shepherd
+    license_url: https://github.com/shaffe-fr/php-shepherd/blob/main/LICENSE
+    require_license_acceptance: false
+    project_source_url: https://github.com/shaffe-fr/php-shepherd
+    bug_tracker_url: https://github.com/shaffe-fr/php-shepherd/issues
+    tags: "php laravel herd version-manager cli developer-tools"
+    summary: Per-project PHP version switching on Windows for Laravel Herd
+    description: |
+      Drop a .phpversion file in your project, and php/composer automatically use
+      the right version. No manual switching, no batch scripts, no broken PATH.
+    api_key: "{{ .Env.CHOCOLATEY_API_KEY }}"
+    source_repo: "https://push.chocolatey.org/"
+    skip_publish: false
+
+winget:
+  - name: shepherd
+    publisher: shaffe-fr
+    short_description: Per-project PHP version switching on Windows for Laravel Herd
+    license: MIT
+    publisher_url: https://github.com/shaffe-fr
+    package_identifier: Shaffe.Shepherd
+    repository:
+      owner: shaffe-fr
+      name: winget-pkgs
+      branch: "shepherd-{{.Version}}"
+      pull_request:
+        enabled: true
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+    tags:
+      - php
+      - laravel
+      - herd
+      - version-manager
+      - cli
+      - developer-tools
+
 release:
   draft: false
   prerelease: auto
