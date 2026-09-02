@@ -266,25 +266,6 @@ func cmdExtInstall() {
 		fmt.Fprintf(os.Stderr, "Warning: no php_%s.dll found in archive\n", extName)
 	}
 
-	// Download and install dependency libraries (e.g. ImageMagick DLLs for imagick)
-	if extDef.source.depsURLPattern != "" {
-		depsURL := buildExtURL(extDef.source.depsURLPattern, extVersion, phpVersion, ts, vsVersion, arch)
-		fmt.Fprintf(os.Stderr, "Downloading dependencies: %s\n", depsURL)
-
-		depsZipPath, err := downloadFile(depsURL)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to download dependencies: %v\n", err)
-			fmt.Fprintf(os.Stderr, "  You may need to install support libraries manually.\n")
-		} else {
-			defer func() { _ = os.Remove(depsZipPath) }()
-			if _, err := installExtFiles(depsZipPath, extName, phpDir, extDir); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to install dependencies: %v\n", err)
-			} else {
-				fmt.Fprintln(os.Stderr, "Dependencies installed.")
-			}
-		}
-	}
-
 	// Update php.ini
 	iniPath := filepath.Join(phpDir, "php.ini")
 	if err := addExtensionToIni(iniPath, extName); err != nil {
@@ -386,22 +367,6 @@ func installExtForVersion(extDef *extDefinition, extName, extVersion, phpVersion
 	}
 	if !installed {
 		fmt.Printf("  Warning: no php_%s.dll found in archive\n", extName)
-	}
-
-	// Download and install dependency libraries
-	if extDef.source.depsURLPattern != "" {
-		depsURL := buildExtURL(extDef.source.depsURLPattern, extVersion, phpVersion, ts, vsVersion, arch)
-		fmt.Printf("  Downloading dependencies...\n")
-
-		depsZipPath, err := downloadFile(depsURL)
-		if err != nil {
-			fmt.Printf("  Warning: failed to download dependencies: %v\n", err)
-		} else {
-			defer func() { _ = os.Remove(depsZipPath) }()
-			if _, err := installExtFiles(depsZipPath, extName, phpDir, extDir); err != nil {
-				fmt.Printf("  Warning: failed to install dependencies: %v\n", err)
-			}
-		}
 	}
 
 	// Update php.ini

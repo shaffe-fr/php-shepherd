@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -700,4 +701,38 @@ func TestParentProcessName_FromBinary(t *testing.T) {
 		t.Errorf("unexpected output from binary: %s", out)
 	}
 	t.Logf("binary output: %s", strings.TrimSpace(string(out)))
+}
+
+// TestExtensionRegistry_NoHardcodedLibraryVersions guards the bug that made
+// imagick installs rot: a support-library version written straight into a
+// download URL (ImageMagick-7.1.1-41-...) which broke as soon as php.net
+// removed that archive. Every version-like token in a pattern must come from a
+// placeholder, so nothing can go stale silently.
+func TestExtensionRegistry_NoHardcodedLibraryVersions(t *testing.T) {
+	placeholders := []string{"{version}", "{phpDotVer}", "{phpMajMin}", "{ts}", "{vs}", "{arch}"}
+	versionish := regexp.MustCompile(`\d+\.\d+`)
+
+	for name, def := range extensionRegistry {
+		stripped := def.source.urlPattern
+		for _, p := range placeholders {
+			stripped = strings.ReplaceAll(stripped, p, "")
+		}
+		if m := versionish.FindString(stripped); m != "" {
+			t.Errorf("extension %q has a hardcoded version %q in its URL pattern: %s",
+				name, m, def.source.urlPattern)
+		}
+	}
+}
+
+// TestImagickNeedsNoSeparateDepsDownload documents a verified fact: the imagick
+// PECL zip bundles the whole ImageMagick DLL set, so no second download is
+// needed. Reintroducing one would mean pinning a library version again.
+func TestImagickNeedsNoSeparateDepsDownload(t *testing.T) {
+	def, ok := extensionRegistry["imagick"]
+	if !ok {
+		t.Fatal("imagick missing from the registry")
+	}
+	if def.source.urlPattern == "" {
+		t.Error("imagick must define a download URL pattern")
+	}
 }

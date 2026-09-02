@@ -15,10 +15,6 @@ type extSource struct {
 	// phpDotVer is e.g. "8.4" for PHP 8.4 (used by PECL filenames).
 	// phpMajMin is e.g. "84" for PHP 8.4 (digits only, no dot).
 	urlPattern string
-
-	// depsURLPattern is an optional secondary download for support libraries
-	// (e.g. ImageMagick DLLs for imagick). Same placeholders available.
-	depsURLPattern string
 }
 
 // extDefinition describes a supported extension and how to install it.
@@ -42,12 +38,16 @@ type extDefinition struct {
 // extensionRegistry maps extension names to their definitions.
 // Only extensions known to have working Windows NTS x64 builds are listed.
 var extensionRegistry = map[string]*extDefinition{
+	// imagick needs no separate ImageMagick download: the PECL release zip
+	// ships the full CORE_RL_*/IM_MOD_RL_* set alongside php_imagick.dll
+	// (verified on 3.7.0 and 3.8.1). Pulling the standalone ImageMagick
+	// archive only duplicated those DLLs, added the CLI tools to the PHP
+	// directory, and forced a hardcoded library version that went stale.
 	"imagick": {
 		name:      "imagick",
 		directive: "extension",
 		source: extSource{
-			urlPattern:     "https://downloads.php.net/~windows/pecl/releases/imagick/{version}/php_imagick-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
-			depsURLPattern: "https://windows.php.net/downloads/pecl/deps/ImageMagick-7.1.1-41-{vs}-{arch}.zip",
+			urlPattern: "https://downloads.php.net/~windows/pecl/releases/imagick/{version}/php_imagick-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
 		},
 	},
 	"redis": {
