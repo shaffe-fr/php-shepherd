@@ -323,6 +323,16 @@ func TestBuildExtURL(t *testing.T) {
 			arch:       "x64",
 			want:       "https://example.com/3.4.0/php_memcached-3.4.0-8.4-nts-vs17-x64.zip",
 		},
+		{
+			name:       "brotli extension URL from registry pattern",
+			pattern:    extensionRegistry["brotli"].source.urlPattern,
+			version:    "0.15.0",
+			phpVersion: "8.4",
+			ts:         "ts",
+			vs:         "vs17",
+			arch:       "x64",
+			want:       "https://downloads.php.net/~windows/pecl/releases/brotli/0.15.0/php_brotli-0.15.0-8.4-ts-vs17-x64.zip",
+		},
 	}
 
 	for _, tt := range tests {
@@ -416,7 +426,7 @@ func TestListSupportedExtensions(t *testing.T) {
 	}
 
 	// Verify known extensions are present
-	known := []string{"redis", "imagick", "igbinary"}
+	known := []string{"redis", "imagick", "igbinary", "brotli"}
 	for _, k := range known {
 		found := false
 		for _, e := range exts {

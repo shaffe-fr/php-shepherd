@@ -50,6 +50,13 @@ var extensionRegistry = map[string]*extDefinition{
 			urlPattern: "https://downloads.php.net/~windows/pecl/releases/imagick/{version}/php_imagick-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
 		},
 	},
+	"brotli": {
+		name:      "brotli",
+		directive: "extension",
+		source: extSource{
+			urlPattern: "https://downloads.php.net/~windows/pecl/releases/brotli/{version}/php_brotli-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
+		},
+	},
 	"redis": {
 		name:      "redis",
 		directive: "extension",
