@@ -230,7 +230,7 @@ func cmdSelfUpdate() {
 
 	var downloadURL string
 	var checksumURL string
-	var hasCosignSig bool
+	var signatureAvailable bool
 	for _, asset := range release.Assets {
 		if strings.EqualFold(asset.Name, assetName) {
 			downloadURL = asset.BrowserDownloadURL
@@ -239,7 +239,7 @@ func cmdSelfUpdate() {
 			checksumURL = asset.BrowserDownloadURL
 		}
 		if strings.EqualFold(asset.Name, "checksums.txt.sig") {
-			hasCosignSig = true
+			signatureAvailable = true
 		}
 	}
 
@@ -283,8 +283,10 @@ func cmdSelfUpdate() {
 		os.Exit(1)
 	}
 	fmt.Fprintln(os.Stderr, "Checksum verified ✓")
-	if hasCosignSig {
-		fmt.Fprintln(os.Stderr, "Signature verified ✓")
+	// Verifying the cosign signature needs the sigstore trust root, which Shepherd
+	// does not carry. Announcing availability keeps the claim to what was checked.
+	if signatureAvailable {
+		fmt.Fprintln(os.Stderr, "Cosign signature published for this release (verify manually — see SECURITY.md)")
 	}
 
 	// Extract shp.exe from the zip
