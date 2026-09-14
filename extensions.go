@@ -4,9 +4,24 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+// extNameRe constrains extension names to characters that can neither escape a
+// directory nor a URL path. Removal deliberately accepts names absent from
+// extensionRegistry (xdebug, opcache), so this format check is what keeps the
+// resolved DLL path inside the ext directory.
+var extNameRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
+
+// extVersionRe matches PECL version strings, including prerelease suffixes such
+// as 3.1.6RC2. Values reach a download URL, so anything outside this shape is
+// refused rather than interpolated.
+var extVersionRe = regexp.MustCompile(`^\d+\.\d+\.\d+[A-Za-z0-9]*$`)
+
+// vsVersionRe matches the Visual Studio build tag used in PECL filenames (vs17).
+var vsVersionRe = regexp.MustCompile(`^vs\d+$`)
 
 // extSource defines where and how to download an extension.
 type extSource struct {

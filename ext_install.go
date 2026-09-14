@@ -111,6 +111,16 @@ func cmdExtInstall() {
 		}
 	}
 
+	// Both values are interpolated into the download URL path.
+	if extVersion != "" && !extVersionRe.MatchString(extVersion) {
+		fmt.Fprintf(os.Stderr, "Error: invalid extension version %q (expected X.Y.Z, e.g. 3.8.1)\n", extVersion)
+		os.Exit(1)
+	}
+	if !vsVersionRe.MatchString(vsVersion) {
+		fmt.Fprintf(os.Stderr, "Error: invalid Visual Studio version %q (expected vsNN, e.g. vs17)\n", vsVersion)
+		os.Exit(1)
+	}
+
 	// Resolve PHP version(s)
 	if phpVersion == "all" {
 		versions := installedPHPVersions()
@@ -391,7 +401,6 @@ func installExtForVersion(extDef *extDefinition, extName, extVersion, phpVersion
 // detectPeclVersion scrapes pecl.php.net to find the latest stable version.
 func detectPeclVersion(extName string) (string, error) {
 	// Validate extension name to prevent URL injection.
-	extNameRe := regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 	if !extNameRe.MatchString(extName) {
 		return "", fmt.Errorf("invalid extension name: %q", extName)
 	}
@@ -644,6 +653,10 @@ func cmdExtRemove() {
 	}
 
 	extName := strings.ToLower(os.Args[3])
+	if !extNameRe.MatchString(extName) {
+		fmt.Fprintf(os.Stderr, "Error: invalid extension name %q\n", extName)
+		os.Exit(1)
+	}
 	phpVersion := ""
 
 	for _, arg := range os.Args[4:] {

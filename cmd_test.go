@@ -728,3 +728,83 @@ func TestUnknownCommandDoesNotInstall(t *testing.T) {
 		}
 	})
 }
+
+// TestExtRemoveRejectsPathTraversal covers a real deletion primitive: extName was
+// concatenated into "php_<name>.dll" and joined with the ext directory, so a name
+// made of parent segments resolved to an arbitrary .dll outside of it.
+func TestExtRemoveRejectsPathTraversal(t *testing.T) {
+	profile := fakeHerd(t, []string{"8.4"})
+	env := baseEnv(profile)
+
+	victim := filepath.Join(profile, "victim.dll")
+	if err := os.WriteFile(victim, []byte("sensitive"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// ext/ -> php84 -> bin -> herd -> .config -> profile, plus one segment absorbed
+	// by the "php_" prefix.
+	traversal := filepath.Join("..", "..", "..", "..", "..", "..", "..", "victim")
+
+	res := runShp(t, []string{"ext", "remove", traversal, "--php=8.4"}, env)
+	if res.ExitCode == 0 {
+		t.Errorf("expected non-zero exit for a traversing extension name, stdout: %s", res.Stdout)
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Errorf("file outside the ext directory was deleted: %v", err)
+	}
+}
+
+// TestExtAddRejectsMalformedURLValues keeps --ext-version and --vs from reaching
+// the download URL unchecked.
+func TestExtAddRejectsMalformedURLValues(t *testing.T) {
+	profile := fakeHerd(t, []string{"8.4"})
+	env := baseEnv(profile)
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"traversing ext-version", []string{"ext", "add", "redis", "--php=8.4", "--ext-version=../../evil"}},
+		{"traversing vs", []string{"ext", "add", "redis", "--php=8.4", "--vs=../../evil"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := runShp(t, tc.args, env)
+			if res.ExitCode == 0 {
+				t.Errorf("expected non-zero exit, stdout: %s", res.Stdout)
+			}
+			if !strings.Contains(res.Stderr, "invalid") {
+				t.Errorf("expected an 'invalid' error, got: %s", res.Stderr)
+			}
+		})
+	}
+}
+
+// TestExtVersionPatterns pins the accepted shapes, including PECL prereleases.
+func TestExtVersionPatterns(t *testing.T) {
+	valid := []string{"3.8.1", "1.0.0", "3.1.6RC2", "2.2.0beta1"}
+	invalid := []string{"", "3.8", "../../evil", "3.8.1/../x", "3.8.1 ", "%2e%2e"}
+
+	for _, v := range valid {
+		if !extVersionRe.MatchString(v) {
+			t.Errorf("extVersionRe rejected valid version %q", v)
+		}
+	}
+	for _, v := range invalid {
+		if extVersionRe.MatchString(v) {
+			t.Errorf("extVersionRe accepted invalid version %q", v)
+		}
+	}
+
+	for _, v := range []string{"vs17", "vs16"} {
+		if !vsVersionRe.MatchString(v) {
+			t.Errorf("vsVersionRe rejected valid value %q", v)
+		}
+	}
+	for _, v := range []string{"", "vs", "17", "../vs17", "vs17x"} {
+		if vsVersionRe.MatchString(v) {
+			t.Errorf("vsVersionRe accepted invalid value %q", v)
+		}
+	}
+}
