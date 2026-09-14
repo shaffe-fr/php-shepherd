@@ -1213,6 +1213,14 @@ func killShimProcesses(dir string) {
 	}
 }
 
+// subcommandArgs returns the arguments following the subcommand name.
+func subcommandArgs() []string {
+	if len(os.Args) < 3 {
+		return nil
+	}
+	return os.Args[2:]
+}
+
 // cmdInstall installs the shims and configures PATH.
 func cmdInstall() {
 	dir := shimDir()
@@ -1220,7 +1228,7 @@ func cmdInstall() {
 	// Parse installation flags.
 	force := false
 	enableGuard := false
-	for _, arg := range os.Args[2:] {
+	for _, arg := range subcommandArgs() {
 		switch arg {
 		case "--force", "-f":
 			force = true

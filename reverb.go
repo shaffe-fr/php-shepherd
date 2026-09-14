@@ -95,7 +95,7 @@ func cmdReverb() {
 
 	// Parse --port flag
 	port := 8443
-	for _, arg := range os.Args[2:] {
+	for _, arg := range subcommandArgs() {
 		if strings.HasPrefix(arg, "--port=") {
 			v, perr := strconv.Atoi(strings.TrimPrefix(arg, "--port="))
 			if perr != nil || v < 1 || v > 65535 {
