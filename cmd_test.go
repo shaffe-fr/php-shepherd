@@ -687,3 +687,44 @@ func TestGlobalFlags(t *testing.T) {
 		}
 	})
 }
+
+// TestUnknownCommandDoesNotInstall covers the dispatch fall-through: an
+// unrecognized command used to reach the first-run install branch, letting its
+// flags be parsed as installation flags.
+func TestUnknownCommandDoesNotInstall(t *testing.T) {
+	profile := fakeHerd(t, []string{"8.4"})
+	env := baseEnv(profile)
+	shimBin := filepath.Join(profile, ".config", "shepherd", "bin")
+
+	t.Run("unknown command is rejected", func(t *testing.T) {
+		res := runShp(t, []string{"bogus-command"}, env)
+		if res.ExitCode == 0 {
+			t.Fatalf("expected non-zero exit, stdout: %s", res.Stdout)
+		}
+		if !strings.Contains(res.Stderr, "unknown command") {
+			t.Errorf("expected 'unknown command' in stderr, got: %s", res.Stderr)
+		}
+	})
+
+	t.Run("install flags on an unknown command install nothing", func(t *testing.T) {
+		res := runShp(t, []string{"bogus-command", "--force", "--enable-path-guard"}, env)
+		if res.ExitCode == 0 {
+			t.Fatalf("expected non-zero exit, stdout: %s", res.Stdout)
+		}
+		for _, name := range []string{"php.exe", "composer.exe", "shp.exe"} {
+			if _, err := os.Stat(filepath.Join(shimBin, name)); err == nil {
+				t.Errorf("%s was installed by an unknown command", name)
+			}
+		}
+	})
+
+	t.Run("explicit help works when not installed", func(t *testing.T) {
+		res := runShp(t, []string{"--help"}, env)
+		if res.ExitCode != 0 {
+			t.Fatalf("exit code %d, stderr: %s", res.ExitCode, res.Stderr)
+		}
+		if !strings.Contains(res.Stdout, "Commands:") {
+			t.Errorf("expected help text, got: %s", res.Stdout)
+		}
+	})
+}

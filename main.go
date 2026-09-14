@@ -349,13 +349,14 @@ func main() {
 			triggerUpdateCheckIfStale()
 		}
 
+		explicitHelp := false
 		if len(os.Args) > 1 {
 			switch os.Args[1] {
 			case "use":
 				cmdUse()
 				return
 			case "install":
-				cmdInstall()
+				cmdInstall(subcommandArgs())
 				return
 			case "guard":
 				cmdPathGuard()
@@ -402,16 +403,22 @@ func main() {
 					fmt.Printf("shp %s\n", version)
 				}
 				return
+			case "help", "-h", "--help":
+				explicitHelp = true
+			default:
+				fmt.Fprintf(os.Stderr, "Error: unknown command %q\n", os.Args[1])
+				fmt.Fprintln(os.Stderr, "Run `shp --help` for usage.")
+				os.Exit(1)
 			}
 		}
 		// If not installed, propose installation instead of showing help
-		if !isInstalled() {
+		if !explicitHelp && !isInstalled() {
 			if !isInteractive() {
 				// Non-interactive (CI, piped, etc.) — fall through to show help
 			} else {
 				fromExplorer := isLaunchedFromExplorer()
 				if confirmInstall() {
-					cmdInstall()
+					cmdInstall(nil)
 				} else {
 					fmt.Println("Skipped. Run `shp install` when you're ready.")
 				}
@@ -1231,14 +1238,16 @@ func subcommandArgs() []string {
 	return os.Args[2:]
 }
 
-// cmdInstall installs the shims and configures PATH.
-func cmdInstall() {
+// cmdInstall installs the shims and configures PATH. Flags are passed in rather
+// than read from os.Args: the interactive first-run prompt reaches this without
+// an "install" subcommand, and must not adopt that invocation's arguments.
+func cmdInstall(args []string) {
 	dir := shimDir()
 
 	// Parse installation flags.
 	force := false
 	enableGuard := false
-	for _, arg := range subcommandArgs() {
+	for _, arg := range args {
 		switch arg {
 		case "--force", "-f":
 			force = true
