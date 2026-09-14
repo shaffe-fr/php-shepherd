@@ -250,25 +250,31 @@ func isInstalled() bool {
 // directly, avoiding CreateToolhelp32Snapshot which enumerates all processes
 // and is commonly flagged by AV heuristics as reconnaissance behavior.
 func parentProcessName() string {
-	ppid := uint32(os.Getppid())
+	fullPath := processImagePath(uint32(os.Getppid()))
+	if fullPath == "" {
+		return ""
+	}
+	return filepath.Base(fullPath)
+}
 
+// processImagePath returns the full executable path of a PID, or "" when it
+// cannot be determined.
+func processImagePath(pid uint32) string {
 	// PROCESS_QUERY_LIMITED_INFORMATION (0x1000) is sufficient for QueryFullProcessImageName
 	// and does not require elevation.
-	handle, err := windows.OpenProcess(0x1000, false, ppid)
+	handle, err := windows.OpenProcess(0x1000, false, pid)
 	if err != nil {
 		return ""
 	}
 	defer func() { _ = windows.CloseHandle(handle) }()
 
-	buf := make([]uint16, 260)
+	buf := make([]uint16, windows.MAX_LONG_PATH)
 	size := uint32(len(buf))
 	// QueryFullProcessImageNameW: dwFlags=0 means Win32 path format.
-	err = windows.QueryFullProcessImageName(handle, 0, &buf[0], &size)
-	if err != nil {
+	if err := windows.QueryFullProcessImageName(handle, 0, &buf[0], &size); err != nil {
 		return ""
 	}
-	fullPath := windows.UTF16ToString(buf[:size])
-	return filepath.Base(fullPath)
+	return windows.UTF16ToString(buf[:size])
 }
 
 // isLaunchedFromExplorer returns true if the binary was double-clicked from Explorer.
@@ -1129,33 +1135,16 @@ func cmdRun() {
 
 // killShimProcesses kills any running shim processes from the given directory.
 func killShimProcesses(dir string) {
-	// Use tasklist + findstr to locate processes running from the shim directory.
-	// WMIC is deprecated and removed in Windows 11 24H2+.
 	dir = strings.TrimRight(dir, `\`)
 	dirLower := strings.ToLower(dir)
 
-	// Get verbose process list (includes image path)
-	taskCmd := exec.Command("tasklist", "/V", "/FO", "CSV", "/NH")
+	// tasklist only supplies candidate PIDs by image name; each path is resolved
+	// through processImagePath. WMIC is removed in Windows 11 24H2+, and shelling
+	// out to PowerShell for Get-Process reads as process reconnaissance to AV.
+	taskCmd := exec.Command("tasklist", "/FO", "CSV", "/NH")
 	out, err := taskCmd.Output()
 	if err != nil {
 		return
-	}
-
-	// Also try wmic as fallback for older systems where tasklist /V doesn't show paths
-	wmicCmd := exec.Command("wmic", "process", "get", "ProcessId,ExecutablePath", "/format:csv")
-	wmicOut, _ := wmicCmd.Output()
-
-	// Build PID→path map from wmic output (best effort)
-	pidPath := make(map[int]string)
-	for _, line := range strings.Split(string(wmicOut), "\n") {
-		fields := strings.Split(strings.TrimSpace(line), ",")
-		if len(fields) >= 3 {
-			path := strings.TrimSpace(fields[1])
-			pid, err := strconv.Atoi(strings.TrimSpace(fields[2]))
-			if err == nil && path != "" {
-				pidPath[pid] = path
-			}
-		}
 	}
 
 	// Parse tasklist CSV output to get PIDs of processes with matching image names
@@ -1181,25 +1170,10 @@ func killShimProcesses(dir string) {
 		if err != nil || pid == myPID {
 			continue
 		}
-		// Verify the process path is inside our shim dir.
-		// If we cannot determine the path (wmic unavailable on Win11 24H2+),
-		// skip the process to avoid killing unrelated php.exe instances.
-		p, ok := pidPath[pid]
-		if !ok {
-			// Try PowerShell as fallback to get the process path
-			psCmd := exec.Command("powershell", "-NoProfile", "-Command",
-				fmt.Sprintf("(Get-Process -Id %d -ErrorAction SilentlyContinue).Path", pid))
-			psOut, psErr := psCmd.Output()
-			if psErr == nil {
-				psPath := strings.TrimSpace(string(psOut))
-				if psPath != "" {
-					p = psPath
-					ok = true
-				}
-			}
-		}
-		if !ok {
-			// Cannot determine process path — skip to avoid killing unrelated processes
+		// Verify the process path is inside our shim dir. An undeterminable path
+		// means the process is skipped, so unrelated php.exe instances survive.
+		p := processImagePath(uint32(pid))
+		if p == "" {
 			continue
 		}
 		if !strings.HasPrefix(strings.ToLower(p), dirLower+`\`) {

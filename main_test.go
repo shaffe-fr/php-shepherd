@@ -746,3 +746,32 @@ func TestImagickNeedsNoSeparateDepsDownload(t *testing.T) {
 		t.Error("imagick must define a download URL pattern")
 	}
 }
+
+func TestProcessImagePath(t *testing.T) {
+	self := processImagePath(uint32(os.Getpid()))
+	if self == "" {
+		t.Fatal("processImagePath() returned empty for the current process")
+	}
+	if !strings.HasSuffix(strings.ToLower(self), ".exe") {
+		t.Errorf("expected an .exe path, got %q", self)
+	}
+	if !filepath.IsAbs(self) {
+		t.Errorf("expected an absolute path, got %q", self)
+	}
+
+	// PID 0 is the idle process: it cannot be opened, so the caller must be able
+	// to distinguish "unknown path" from a real one rather than kill blindly.
+	if got := processImagePath(0); got != "" {
+		t.Errorf("expected empty path for PID 0, got %q", got)
+	}
+}
+
+// TestKillShimProcessesLeavesUnrelatedProcesses runs the scan against a directory
+// that holds no shims: the current process must survive it.
+func TestKillShimProcessesLeavesUnrelatedProcesses(t *testing.T) {
+	killShimProcesses(t.TempDir())
+
+	if self := processImagePath(uint32(os.Getpid())); self == "" {
+		t.Fatal("current process died during killShimProcesses")
+	}
+}
