@@ -426,14 +426,8 @@ func confirmPathGuard() bool {
 // cmdPathGuard manages the optional PATH Guard task.
 func cmdPathGuard() {
 	usage := func() {
-		if jsonOutput {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			_ = enc.Encode(map[string]string{
-				"command":     "guard",
-				"usage":       "shp guard <enable|disable|status>",
-				"description": "Manage the optional PATH Guard that keeps Shepherd ahead of Herd",
-			})
+		if emitHelpJSON("guard", "shp guard <enable|disable|status>",
+			"Manage the optional PATH Guard that keeps Shepherd ahead of Herd") {
 			return
 		}
 		fmt.Println("Usage: shp guard <enable|disable|status>")

@@ -1033,14 +1033,8 @@ func cmdRun() {
 	ver := os.Args[2]
 
 	if ver == "-h" || ver == "--help" {
-		if jsonOutput {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			_ = enc.Encode(map[string]interface{}{
-				"command":     "run",
-				"usage":       "shp run <version> -- <command...>",
-				"description": "Run a command with a specific PHP version without modifying .phpversion",
-			})
+		if emitHelpJSON("run", "shp run <version> -- <command...>",
+			"Run a command with a specific PHP version without modifying .phpversion") {
 			return
 		}
 		fmt.Println("Usage: shp run <version> -- <command...>")
@@ -1211,6 +1205,22 @@ func killShimProcesses(dir string) {
 		_ = proc.Kill()
 		fmt.Printf("  ✓ Killed shim process (PID %d)\n", pid)
 	}
+}
+
+// emitHelpJSON reports whether the help was rendered as JSON, so callers can
+// skip their plain-text usage block.
+func emitHelpJSON(command, usage, description string) bool {
+	if !jsonOutput {
+		return false
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(map[string]string{
+		"command":     command,
+		"usage":       usage,
+		"description": description,
+	})
+	return true
 }
 
 // subcommandArgs returns the arguments following the subcommand name.

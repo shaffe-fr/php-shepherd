@@ -42,6 +42,9 @@ func cmdExt() {
 }
 
 func extUsage() {
+	if emitHelpJSON("ext", "shp ext <command> [options]", "Manage PHP extensions") {
+		return
+	}
 	fmt.Println("Usage: shp ext <command> [options]")
 	fmt.Println()
 	fmt.Println("Manage PHP extensions.")

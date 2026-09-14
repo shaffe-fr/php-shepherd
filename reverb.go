@@ -50,6 +50,10 @@ func cmdReverb() {
 
 	// Help
 	if len(os.Args) > 2 && (os.Args[2] == "-h" || os.Args[2] == "--help") {
+		if emitHelpJSON("reverb", "shp reverb [command]",
+			"Show Reverb status and configuration for the current project") {
+			return
+		}
 		fmt.Println("Usage: shp reverb [command]")
 		fmt.Println()
 		fmt.Println("Show Reverb status and configuration for the current project.")

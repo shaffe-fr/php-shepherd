@@ -86,6 +86,10 @@ func cmdXdebug() {
 	mode := strings.ToLower(os.Args[2])
 
 	if mode == "-h" || mode == "--help" {
+		if emitHelpJSON("xdebug", "shp xdebug <command>",
+			"Manage xdebug for the resolved PHP version") {
+			return
+		}
 		fmt.Println("Usage: shp xdebug <command>")
 		fmt.Println()
 		fmt.Println("Manage xdebug for the resolved PHP version.")
@@ -434,14 +438,8 @@ func cmdXdebugRun() {
 	// shp xdebug run <mode> -- <command...>
 	// os.Args[0]=shp [1]=xdebug [2]=run [3]=mode ... [sep]=-- [cmd...]
 	if len(os.Args) < 4 || os.Args[3] == "-h" || os.Args[3] == "--help" {
-		if jsonOutput {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			_ = enc.Encode(map[string]interface{}{
-				"command":     "xdebug run",
-				"usage":       "shp xdebug run <mode> -- <command...>",
-				"description": "Stateless: run a command with xdebug (one-off, no config change)",
-			})
+		if emitHelpJSON("xdebug run", "shp xdebug run <mode> -- <command...>",
+			"Stateless: run a command with xdebug (one-off, no config change)") {
 			return
 		}
 		fmt.Println("Usage: shp xdebug run <mode> -- <command...>")
