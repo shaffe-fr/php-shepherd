@@ -70,28 +70,41 @@ That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in 
 | `shp run <ver> -- …` | Run a command with a specific PHP version                            |
 | `shp which`          | Show resolved PHP path and source                                    |
 | `shp current`        | Print the resolved PHP version                                       |
-| `shp list`           | List available PHP versions                                          |
+| `shp list`, `ls`     | List available PHP versions                                          |
 | `shp status`         | Show configuration overview                                          |
 | `shp xdebug <cmd>`   | Manage xdebug (`on`, `off`, `toggle`, `profile`, `trace`, `run`)     |
 | `shp ext add <name>` | Install a PHP extension (DLL + deps + ini)                           |
-| `shp ext list`       | List installed extensions                                            |
-| `shp ext remove <n>` | Remove an installed extension                                        |
-| `shp reverb`         | Show Laravel Reverb status and .env config                           |
+| `shp ext list`       | List installed extensions (alias `ls`)                               |
+| `shp ext remove <n>` | Remove an installed extension (alias `rm`)                           |
+| `shp reverb [cmd]`   | Show Laravel Reverb status (`status`, `env`)                          |
 | `shp doctor`         | Diagnose common setup issues                                         |
 | `shp self-update`    | Update to the latest release (SHA256-verified)                       |
 | `shp install`        | Install shims and configure PATH                                     |
 | `shp guard <cmd>`    | Manage the optional PATH Guard (`enable`, `disable`, `status`)       |
 | `shp uninstall`      | Remove shims and restore PATH                                        |
-| `shp version`        | Show current version                                                 |
+| `shp version`        | Show current version (`--version`, `-v`)                             |
+| `shp help`           | Show built-in help (`-h`, `--help`)                                  |
 
 ### Global flags
 
 | Flag               | Description                        |
 |--------------------|------------------------------------|
 | `--verbose`        | Extra diagnostic output            |
-| `--quiet`          | Suppress non-essential output      |
+| `--quiet`, `-q`    | Suppress non-essential output      |
 | `--json`           | Machine-readable JSON output       |
 | `--no-interactive` | Skip prompts (auto-detected in CI) |
+
+### Command flags
+
+| Flag                    | Applies to     | Description                                       |
+|-------------------------|----------------|---------------------------------------------------|
+| `--force`, `-f`         | `install`      | Reinstall, killing running shim processes first   |
+| `--enable-path-guard`   | `install`      | Enable the PATH Guard without prompting           |
+| `--php=X.Y`, `--php=all`| `ext *`        | Target a specific PHP version, or all of them     |
+| `--ext-version=V`       | `ext add`      | Pin the extension version (default: latest PECL)  |
+| `--ts`                  | `ext add`      | Use the Thread Safe build (default: NTS)          |
+| `--vs=vsNN`             | `ext add`      | Visual Studio build tag (default: `vs17`)         |
+| `--port=PORT`           | `reverb`       | Reverb listen port (default: 8443)                |
 
 ## Xdebug management
 
@@ -167,8 +180,27 @@ List what's installed and remove what you don't need:
 
 ```powershell
 shp ext list               # show extensions for the current PHP version
+shp ext list --php=8.3     # or for a specific one
 shp ext remove redis       # remove DLL and php.ini directive
 shp ext remove redis --php=all
+```
+
+Pin a build when the defaults don't fit:
+
+```powershell
+shp ext add redis --ext-version=6.0.2   # instead of the latest PECL release
+shp ext add redis --ts                  # Thread Safe build (default: NTS)
+shp ext add redis --vs=vs16             # older Visual Studio build tag
+```
+
+## Laravel Reverb
+
+Reverb serves WebSockets directly over TLS using Herd's certificates, so no nginx reverse proxy is needed.
+
+```powershell
+shp reverb              # connectivity status for the current project
+shp reverb env          # the .env variables to copy
+shp reverb --port=9000  # non-default listen port (default: 8443)
 ```
 
 ## Self-update
@@ -243,6 +275,7 @@ Common fixes:
 - **Wrong PHP version** → `shp status` to check PATH order, then `shp install` + restart terminal
 - **Version not found** → install it from the Herd UI
 - **nginx errors** → `shp doctor` will report the file and line
+- **Antivirus flags `shp.exe`** → expected on an unsigned binary that copies itself and edits your PATH; see [SECURITY.md](SECURITY.md#antivirus-false-positives)
 
 ## Build from source
 

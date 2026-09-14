@@ -443,8 +443,9 @@ func main() {
 				Description string   `json:"description"`
 			}
 			type flagInfo struct {
-				Name        string `json:"name"`
-				Description string `json:"description"`
+				Name        string   `json:"name"`
+				Aliases     []string `json:"aliases,omitempty"`
+				Description string   `json:"description"`
 			}
 			help := struct {
 				Version  string     `json:"version"`
@@ -467,11 +468,12 @@ func main() {
 					{Name: "uninstall", Description: "Remove shims and restore PATH"},
 					{Name: "doctor", Description: "Diagnose common issues with Shepherd setup"},
 					{Name: "self-update", Description: "Update Shepherd to the latest version"},
-					{Name: "version", Description: "Show current Shepherd version"},
+					{Name: "version", Aliases: []string{"--version", "-v"}, Description: "Show current Shepherd version"},
+					{Name: "help", Aliases: []string{"-h", "--help"}, Description: "Show this help"},
 				},
 				Flags: []flagInfo{
 					{Name: "--verbose", Description: "Show extra diagnostic output"},
-					{Name: "--quiet", Description: "Suppress non-essential output"},
+					{Name: "--quiet", Aliases: []string{"-q"}, Description: "Suppress non-essential output"},
 					{Name: "--json", Description: "Output machine-readable JSON (for scripts and LLMs)"},
 					{Name: "--no-interactive", Description: "Skip interactive prompts (auto-detected when stdin is not a terminal)"},
 				},
@@ -499,11 +501,12 @@ func main() {
 		fmt.Println("  uninstall   Remove shims and restore PATH")
 		fmt.Println("  doctor      Diagnose common issues with Shepherd setup")
 		fmt.Println("  self-update Update Shepherd to the latest version")
-		fmt.Println("  version     Show current Shepherd version")
+		fmt.Println("  version     Show current Shepherd version (--version, -v)")
+		fmt.Println("  help        Show this help (-h, --help)")
 		fmt.Println()
 		fmt.Println("Global flags:")
 		fmt.Println("  --verbose         Show extra diagnostic output")
-		fmt.Println("  --quiet           Suppress non-essential output")
+		fmt.Println("  --quiet, -q       Suppress non-essential output")
 		fmt.Println("  --json            Output machine-readable JSON (for scripts and LLMs)")
 		fmt.Println("  --no-interactive  Skip interactive prompts (auto-detected when stdin is not a terminal)")
 		fmt.Println()
