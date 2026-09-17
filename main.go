@@ -379,6 +379,9 @@ func main() {
 			case "ext":
 				cmdExt()
 				return
+			case "coverage":
+				cmdCoverage()
+				return
 			case "reverb":
 				cmdReverb()
 				return
@@ -462,6 +465,7 @@ func main() {
 					{Name: "status", Description: "Show current PHP version and configuration"},
 					{Name: "xdebug", Description: "Manage xdebug for the current PHP version"},
 					{Name: "ext", Description: "Manage PHP extensions (add, list, remove)"},
+					{Name: "coverage", Description: "Manage the code coverage driver (pcov, xdebug)"},
 					{Name: "reverb", Description: "Show Reverb status and .env configuration"},
 					{Name: "install", Description: "Install php.exe and composer.exe shims and configure PATH"},
 					{Name: "guard", Description: "Manage the optional PATH Guard that keeps Shepherd ahead of Herd"},
@@ -495,6 +499,7 @@ func main() {
 		fmt.Println("  status      Show current PHP version and configuration")
 		fmt.Println("  xdebug      Manage xdebug for the current PHP version")
 		fmt.Println("  ext         Manage PHP extensions (add, list, remove)")
+		fmt.Println("  coverage    Manage the code coverage driver (pcov, xdebug)")
 		fmt.Println("  reverb      Show Reverb status and .env configuration")
 		fmt.Println("  install     Install php.exe and composer.exe shims and configure PATH")
 		fmt.Println("  guard       Manage the optional PATH Guard that keeps Shepherd ahead of Herd")

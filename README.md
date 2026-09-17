@@ -76,6 +76,7 @@ That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in 
 | `shp ext add <name>` | Install a PHP extension (DLL + deps + ini)                           |
 | `shp ext list`       | List installed extensions (alias `ls`)                               |
 | `shp ext remove <n>` | Remove an installed extension (alias `rm`)                           |
+| `shp coverage <cmd>` | Manage the code coverage driver (`status`, `install`, `run`)          |
 | `shp reverb [cmd]`   | Show Laravel Reverb status (`status`, `env`)                          |
 | `shp doctor`         | Diagnose common setup issues                                         |
 | `shp self-update`    | Update to the latest release (SHA256-verified)                       |
@@ -132,6 +133,24 @@ shp xdebug run debug -- php script.php
 ```
 
 Xdebug is injected for that invocation only, then gone.
+
+## Code coverage
+
+Coverage has two drivers, and `php-code-coverage` picks one on its own — preferring
+pcov, which is several times faster than xdebug. `shp coverage` resolves the driver
+per command instead of leaving both enabled in `php.ini`:
+
+```powershell
+shp coverage install                                    # add pcov (all versions: --php=all)
+shp coverage status                                      # which driver would be used
+shp coverage run -- php artisan test --coverage
+shp coverage run -- vendor/bin/phpunit --coverage-text
+```
+
+pcov is installed with `pcov.enabled=0`, so it costs nothing on normal runs;
+`coverage run` enables it for that invocation only. Nothing is written to `php.ini`.
+
+pcov reports line coverage only. For branch or path coverage, use `shp xdebug coverage`.
 
 ## Running with a different version
 

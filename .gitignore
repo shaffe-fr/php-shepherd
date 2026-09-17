@@ -1,3 +1,7 @@
 *.exe
-coverage*
+
+# Coverage artifacts, named precisely so coverage.go stays tracked.
+/coverage
+/coverage.out
+/coverage.html
 cover.txt

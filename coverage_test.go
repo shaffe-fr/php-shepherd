@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,6 +134,192 @@ func TestApplyIniDefaultsKeepsExistingValue(t *testing.T) {
 	}
 }
 
+func TestIniAssignsExtension(t *testing.T) {
+	lines := []string{
+		"extension=pcov",
+		`zend_extension=C:\Program Files\Herd\...\xdebug-8.4.dll`,
+		";extension=redis",
+	}
+
+	if !iniAssignsExtension(lines, "extension", "pcov") {
+		t.Error("extension=pcov not detected")
+	}
+	if !iniAssignsExtension(lines, "zend_extension", "xdebug") {
+		t.Error("xdebug DLL path not detected")
+	}
+	if iniAssignsExtension(lines, "extension", "redis") {
+		t.Error("commented extension reported as active")
+	}
+}
+
+func TestPlanCoveragePrefersPcov(t *testing.T) {
+	plan, err := planCoverage(coverageDrivers{
+		extDir:    `C:\php\ext`,
+		pcovDLL:   `C:\php\ext\php_pcov.dll`,
+		xdebugDLL: `C:\xdebug.dll`,
+	})
+	if err != nil {
+		t.Fatalf("planCoverage: %v", err)
+	}
+	if plan.driver != "pcov" {
+		t.Errorf("driver = %q, want pcov", plan.driver)
+	}
+
+	flags := strings.Join(plan.flags, " ")
+	if !strings.Contains(flags, "pcov.enabled=1") {
+		t.Errorf("pcov not enabled for the run: %q", flags)
+	}
+	if strings.Contains(flags, "xdebug") {
+		t.Errorf("xdebug injected alongside pcov: %q", flags)
+	}
+}
+
+// Re-declaring a module php.ini already loads makes PHP warn on every run.
+func TestPlanCoverageSkipsRedundantLoad(t *testing.T) {
+	plan, err := planCoverage(coverageDrivers{
+		extDir:    `C:\php\ext`,
+		pcovDLL:   `C:\php\ext\php_pcov.dll`,
+		pcovInIni: true,
+	})
+	if err != nil {
+		t.Fatalf("planCoverage: %v", err)
+	}
+	if flags := strings.Join(plan.flags, " "); strings.Contains(flags, "extension=php_pcov.dll") {
+		t.Errorf("pcov loaded twice: %q", flags)
+	}
+}
+
+func TestPlanCoverageFallsBackToXdebug(t *testing.T) {
+	plan, err := planCoverage(coverageDrivers{
+		extDir:    `C:\php\ext`,
+		xdebugDLL: `C:\xdebug-8.4.dll`,
+	})
+	if err != nil {
+		t.Fatalf("planCoverage: %v", err)
+	}
+	if plan.driver != "xdebug" {
+		t.Errorf("driver = %q, want xdebug", plan.driver)
+	}
+
+	flags := strings.Join(plan.flags, " ")
+	if !strings.Contains(flags, "xdebug.mode=coverage") {
+		t.Errorf("coverage mode not set: %q", flags)
+	}
+	if !strings.Contains(flags, `zend_extension=C:\xdebug-8.4.dll`) {
+		t.Errorf("xdebug not loaded: %q", flags)
+	}
+}
+
+func TestPlanCoverageWithoutDriver(t *testing.T) {
+	_, err := planCoverage(coverageDrivers{extDir: `C:\php\ext`})
+	if err == nil {
+		t.Fatal("expected an error when no driver is installed")
+	}
+	if !strings.Contains(err.Error(), "shp coverage install") {
+		t.Errorf("error does not point at a fix: %v", err)
+	}
+}
+
+func TestDetectCoverageDriversReadsIni(t *testing.T) {
+	phpDir := t.TempDir()
+	extDir := phpExtDir(phpDir)
+	if err := os.MkdirAll(extDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(extDir, "php_pcov.dll"), []byte("stub"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ini := "extension=pcov\npcov.enabled=0\n"
+	if err := os.WriteFile(phpIniPath(phpDir), []byte(ini), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A version with no Herd DLL on disk isolates this from the host install.
+	d := detectCoverageDrivers(phpDir, "0.0")
+
+	if d.pcovDLL == "" {
+		t.Error("pcov DLL not detected")
+	}
+	if !d.pcovInIni {
+		t.Error("extension=pcov not detected")
+	}
+	if d.pcovEnabledInIni {
+		t.Error("pcov.enabled=0 reported as enabled")
+	}
+	if d.xdebugDLL != "" {
+		t.Errorf("unexpected xdebug DLL: %q", d.xdebugDLL)
+	}
+}
+
+func TestDetectCoverageDriversDefaultsPcovEnabled(t *testing.T) {
+	phpDir := t.TempDir()
+	if err := os.MkdirAll(phpExtDir(phpDir), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(phpIniPath(phpDir), []byte("extension=pcov\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// pcov's own default is enabled, so an absent directive means on.
+	if d := detectCoverageDrivers(phpDir, "0.0"); !d.pcovEnabledInIni {
+		t.Error("absent pcov.enabled should count as enabled")
+	}
+}
+
+func TestResolvePHPTarget(t *testing.T) {
+	dir := t.TempDir()
+	phpunit := filepath.Join(dir, "phpunit")
+	if err := os.WriteFile(phpunit, []byte("#!/usr/bin/env php"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name       string
+		cmdArgs    []string
+		wantScript string
+		wantArgs   []string
+		wantOK     bool
+	}{
+		{
+			name:       "php runs the user args directly",
+			cmdArgs:    []string{"php", "artisan", "test"},
+			wantScript: "",
+			wantArgs:   []string{"artisan", "test"},
+			wantOK:     true,
+		},
+		{
+			name:       "bat wrapper resolves to its php script",
+			cmdArgs:    []string{phpunit + ".bat", "--coverage-text"},
+			wantScript: phpunit,
+			wantArgs:   []string{"--coverage-text"},
+			wantOK:     true,
+		},
+		{
+			name:    "native executable cannot be instrumented",
+			cmdArgs: []string{"npm", "test"},
+			wantOK:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			script, args, ok := resolvePHPTarget(tt.cmdArgs)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if script != tt.wantScript {
+				t.Errorf("script = %q, want %q", script, tt.wantScript)
+			}
+			if strings.Join(args, " ") != strings.Join(tt.wantArgs, " ") {
+				t.Errorf("args = %v, want %v", args, tt.wantArgs)
+			}
+		})
+	}
+}
+
 func TestPcovRegistryEntry(t *testing.T) {
 	def, ok := extensionRegistry["pcov"]
 	if !ok {
@@ -151,5 +338,89 @@ func TestPcovRegistryEntry(t *testing.T) {
 	}
 	if enabled != "0" {
 		t.Errorf("pcov.enabled default = %q, want 0", enabled)
+	}
+}
+
+// captureStderr collects what fn writes to os.Stderr.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+
+	fn()
+	_ = w.Close()
+
+	var buf strings.Builder
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
+}
+
+func TestWarnPcovShadowsXdebug(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     string
+		lines    []string
+		wantWarn bool
+	}{
+		{
+			name:     "pcov enabled shadows a coverage mode",
+			mode:     "coverage",
+			lines:    []string{"extension=pcov", "pcov.enabled=1"},
+			wantWarn: true,
+		},
+		{
+			name:     "absent pcov.enabled means pcov's own default, on",
+			mode:     "debug,coverage",
+			lines:    []string{"extension=pcov"},
+			wantWarn: true,
+		},
+		{
+			name:     "the install default leaves xdebug in charge",
+			mode:     "coverage",
+			lines:    []string{"extension=pcov", "pcov.enabled=0"},
+			wantWarn: false,
+		},
+		{
+			name:     "modes other than coverage are unaffected",
+			mode:     "debug",
+			lines:    []string{"extension=pcov", "pcov.enabled=1"},
+			wantWarn: false,
+		},
+		{
+			name:     "no pcov, no conflict",
+			mode:     "coverage",
+			lines:    []string{"extension=redis"},
+			wantWarn: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := captureStderr(t, func() { warnPcovShadowsXdebug(tt.mode, tt.lines) })
+			if got := strings.Contains(out, "pcov"); got != tt.wantWarn {
+				t.Errorf("warned = %v, want %v (output: %q)", got, tt.wantWarn, out)
+			}
+		})
+	}
+}
+
+func TestWarnPcovShadowsXdebugSilentInJSON(t *testing.T) {
+	orig := jsonOutput
+	jsonOutput = true
+	defer func() { jsonOutput = orig }()
+
+	out := captureStderr(t, func() {
+		warnPcovShadowsXdebug("coverage", []string{"extension=pcov", "pcov.enabled=1"})
+	})
+	if out != "" {
+		t.Errorf("JSON output polluted by a human warning: %q", out)
 	}
 }

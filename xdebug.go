@@ -230,6 +230,8 @@ func cmdXdebug() {
 		os.Exit(1)
 	}
 
+	warnPcovShadowsXdebug(mode, lines)
+
 	// If "off" is requested, just disable
 	if mode == "off" {
 		if zendIdx == -1 {
@@ -510,6 +512,10 @@ func cmdXdebugRun() {
 	if _, err := os.Stat(dllPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: xdebug DLL not found at %s\n", dllPath)
 		os.Exit(1)
+	}
+
+	if data, err := os.ReadFile(phpIniPath(filepath.Dir(phpPath))); err == nil {
+		warnPcovShadowsXdebug(mode, strings.Split(string(data), "\n"))
 	}
 
 	// Build xdebug -d flags
