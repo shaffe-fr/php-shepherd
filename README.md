@@ -103,7 +103,7 @@ That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in 
 | `--php=X.Y`, `--php=all`| `ext *`        | Target a specific PHP version, or all of them     |
 | `--ext-version=V`       | `ext add`      | Pin the extension version (default: latest PECL)  |
 | `--ts`                  | `ext add`      | Use the Thread Safe build (default: NTS)          |
-| `--vs=vsNN`             | `ext add`      | Visual Studio build tag (default: `vs17`)         |
+| `--vs=vsNN`             | `ext add`      | Visual Studio build tag (default: derived from the PHP version) |
 | `--port=PORT`           | `reverb`       | Reverb listen port (default: 8443)                |
 
 ## Xdebug management

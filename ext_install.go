@@ -62,7 +62,7 @@ func extUsage() {
 	fmt.Println("  --php=all         Apply to all PHP versions")
 	fmt.Println("  --ext-version=V   Extension version for add (default: latest from PECL)")
 	fmt.Println("  --ts              Use Thread Safe build (default: NTS)")
-	fmt.Println("  --vs=vsXX         Visual Studio version (default: vs17)")
+	fmt.Println("  --vs=vsXX         Visual Studio version (default: derived from the PHP version)")
 }
 
 // cmdExtInstall installs a PHP extension from PECL.
@@ -88,7 +88,7 @@ func cmdExtInstall() {
 	extName = extDef.name
 	phpVersion := ""
 	extVersion := ""
-	vsVersion := "vs17"
+	vsVersion := ""
 	threadSafe := false
 
 	// Parse flags after the extension name
@@ -116,8 +116,8 @@ func cmdExtInstall() {
 		fmt.Fprintf(os.Stderr, "Error: invalid extension version %q (expected X.Y.Z, e.g. 3.8.1)\n", extVersion)
 		os.Exit(1)
 	}
-	if !vsVersionRe.MatchString(vsVersion) {
-		fmt.Fprintf(os.Stderr, "Error: invalid Visual Studio version %q (expected vsNN, e.g. vs17)\n", vsVersion)
+	if vsVersion != "" && !vsVersionRe.MatchString(vsVersion) {
+		fmt.Fprintf(os.Stderr, "Error: invalid Visual Studio version %q (expected vsNN or vcNN, e.g. vs17)\n", vsVersion)
 		os.Exit(1)
 	}
 
@@ -246,7 +246,7 @@ func cmdExtInstall() {
 		ts = "ts"
 	}
 	arch := "x64"
-	downloadURL := buildExtURL(extDef.source.urlPattern, extVersion, phpVersion, ts, vsVersion, arch)
+	downloadURL := buildExtURL(extDef.source.urlPattern, extVersion, phpVersion, ts, resolveVSTag(vsVersion, phpVersion), arch)
 
 	fmt.Fprintf(os.Stderr, "Downloading: %s\n", downloadURL)
 
@@ -358,7 +358,7 @@ func installExtForVersion(extDef *extDefinition, extName, extVersion, phpVersion
 		ts = "ts"
 	}
 	arch := "x64"
-	downloadURL := buildExtURL(extDef.source.urlPattern, extVersion, phpVersion, ts, vsVersion, arch)
+	downloadURL := buildExtURL(extDef.source.urlPattern, extVersion, phpVersion, ts, resolveVSTag(vsVersion, phpVersion), arch)
 
 	fmt.Printf("  Downloading: %s\n", downloadURL)
 

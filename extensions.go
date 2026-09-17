@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -20,8 +21,55 @@ var extNameRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 // refused rather than interpolated.
 var extVersionRe = regexp.MustCompile(`^\d+\.\d+\.\d+[A-Za-z0-9]*$`)
 
-// vsVersionRe matches the Visual Studio build tag used in PECL filenames (vs17).
-var vsVersionRe = regexp.MustCompile(`^vs\d+$`)
+// vsVersionRe matches the Visual Studio build tag used in PECL filenames.
+// Both spellings occur: vc15 for PHP 7.x, vs16/vs17 for PHP 8.x.
+var vsVersionRe = regexp.MustCompile(`^(vs|vc)\d+$`)
+
+// resolveVSTag picks the build tag for a download, honouring an explicit --vs
+// over the tag derived from the PHP version.
+func resolveVSTag(explicit, phpVersion string) string {
+	if explicit != "" {
+		return explicit
+	}
+	return defaultVSTag(phpVersion)
+}
+
+// defaultVSTag returns the Visual Studio build tag PECL uses for a PHP version.
+// PECL publishes one toolchain per PHP branch, so a fixed tag cannot address
+// more than one branch: pinning vs17 makes every PHP 8.3 or older download 404.
+func defaultVSTag(phpVersion string) string {
+	switch {
+	case comparePHPVersion(phpVersion, "8.4") >= 0:
+		return "vs17"
+	case comparePHPVersion(phpVersion, "8.0") >= 0:
+		return "vs16"
+	default:
+		return "vc15"
+	}
+}
+
+// comparePHPVersion orders two "X.Y" version strings, returning a negative
+// number, zero, or a positive number as a is less than, equal to, or greater
+// than b. Unparseable input sorts as 0.0, which defaultVSTag treats as legacy.
+func comparePHPVersion(a, b string) int {
+	aMaj, aMin := splitPHPVersion(a)
+	bMaj, bMin := splitPHPVersion(b)
+	if aMaj != bMaj {
+		return aMaj - bMaj
+	}
+	return aMin - bMin
+}
+
+// splitPHPVersion splits "8.4" into its major and minor components.
+func splitPHPVersion(v string) (major, minor int) {
+	majStr, minStr, found := strings.Cut(v, ".")
+	if !found {
+		return 0, 0
+	}
+	major, _ = strconv.Atoi(majStr)
+	minor, _ = strconv.Atoi(minStr)
+	return major, minor
+}
 
 // extSource defines where and how to download an extension.
 type extSource struct {
