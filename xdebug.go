@@ -524,7 +524,7 @@ func cmdXdebugRun() {
 
 	// Determine how to run the command
 	cmdName := strings.ToLower(cmdArgs[0])
-	extDir := filepath.Join(filepath.Dir(phpPath), "ext")
+	extDir := phpExtDir(filepath.Dir(phpPath))
 
 	var execArgs []string
 	switch cmdName {

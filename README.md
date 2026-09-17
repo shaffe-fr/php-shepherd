@@ -172,7 +172,7 @@ shp ext add imagick
 shp ext add sqlsrv --php=all   # all installed versions
 ```
 
-Supported: `brotli`, `igbinary`, `imagick`, `memcached`, `pdo_sqlsrv`, `redis`, `sqlsrv`.
+Supported: `brotli`, `igbinary`, `imagick`, `memcached`, `pcov`, `pdo_sqlsrv`, `redis`, `sqlsrv`.
 
 Handles PECL lookup, DLL download, system deps (winget), ini registration, and verification.
 

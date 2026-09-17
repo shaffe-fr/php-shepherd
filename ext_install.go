@@ -263,7 +263,7 @@ func cmdExtInstall() {
 	fmt.Fprintln(os.Stderr, "Download OK.")
 
 	// Extract and install
-	extDir := filepath.Join(phpDir, "ext")
+	extDir := phpExtDir(phpDir)
 	if err := os.MkdirAll(extDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating ext directory: %v\n", err)
 		os.Exit(1)
@@ -284,6 +284,9 @@ func cmdExtInstall() {
 	if err := addExtensionToIni(iniPath, extName); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Add manually: %s=%s\n", extDef.directive, extName)
+	}
+	if err := applyIniDefaults(iniPath, extName, extDef.iniDefaults); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 	}
 
 	// Verify
@@ -369,7 +372,7 @@ func installExtForVersion(extDef *extDefinition, extName, extVersion, phpVersion
 	defer func() { _ = os.Remove(zipPath) }()
 
 	// Extract and install
-	extDir := filepath.Join(phpDir, "ext")
+	extDir := phpExtDir(phpDir)
 	if err := os.MkdirAll(extDir, 0755); err != nil {
 		return fmt.Errorf("cannot create ext directory: %w", err)
 	}
@@ -386,6 +389,9 @@ func installExtForVersion(extDef *extDefinition, extName, extVersion, phpVersion
 	iniPath := filepath.Join(phpDir, "php.ini")
 	if err := addExtensionToIni(iniPath, extName); err != nil {
 		fmt.Printf("  Warning: %v — add manually: %s=%s\n", err, extDef.directive, extName)
+	}
+	if err := applyIniDefaults(iniPath, extName, extDef.iniDefaults); err != nil {
+		fmt.Printf("  Warning: %v\n", err)
 	}
 
 	// Verify
@@ -562,7 +568,7 @@ func cmdExtList() {
 
 	nodot := strings.ReplaceAll(phpVersion, ".", "")
 	phpDir := filepath.Join(herdHome(), "php"+nodot)
-	extDir := filepath.Join(phpDir, "ext")
+	extDir := phpExtDir(phpDir)
 
 	if _, err := os.Stat(phpDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: PHP %s not found at %s\n", phpVersion, phpDir)
@@ -735,7 +741,7 @@ func cmdExtRemove() {
 func removeExtForVersion(extName, phpVersion string) bool {
 	nodot := strings.ReplaceAll(phpVersion, ".", "")
 	phpDir := filepath.Join(herdHome(), "php"+nodot)
-	extDir := filepath.Join(phpDir, "ext")
+	extDir := phpExtDir(phpDir)
 
 	if _, err := os.Stat(phpDir); err != nil {
 		fmt.Fprintf(os.Stderr, "  Error: PHP %s not found at %s\n", phpVersion, phpDir)

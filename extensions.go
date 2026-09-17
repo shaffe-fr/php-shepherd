@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -94,6 +95,10 @@ type extDefinition struct {
 	// postInstallMsg is shown after successful installation (e.g. external deps needed).
 	postInstallMsg string
 
+	// iniDefaults are directives written below the extension= line at install
+	// time, for extensions whose upstream default is wrong for a dev machine.
+	iniDefaults [][2]string
+
 	// wingetDeps lists winget package IDs to install as prerequisites.
 	wingetDeps []string
 }
@@ -150,6 +155,18 @@ var extensionRegistry = map[string]*extDefinition{
 		},
 		wingetDeps: []string{"Microsoft.ODBCDriver.18.ForSQLServer"},
 	},
+	// pcov ships enabled, which instruments every request and every CLI call on
+	// a machine that only needs coverage during a test run. It is installed
+	// disabled instead; `shp coverage run` turns it on per invocation.
+	"pcov": {
+		name:      "pcov",
+		directive: "extension",
+		source: extSource{
+			urlPattern: "https://downloads.php.net/~windows/pecl/releases/pcov/{version}/php_pcov-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
+		},
+		iniDefaults:    [][2]string{{"pcov.enabled", "0"}},
+		postInstallMsg: "collect coverage with: shp coverage run -- php artisan test --coverage",
+	},
 	"memcached": {
 		name:      "memcached",
 		directive: "extension",
@@ -157,6 +174,11 @@ var extensionRegistry = map[string]*extDefinition{
 			urlPattern: "https://downloads.php.net/~windows/pecl/releases/memcached/{version}/php_memcached-{version}-{phpDotVer}-{ts}-{vs}-{arch}.zip",
 		},
 	},
+}
+
+// phpExtDir returns the extension directory for a given php.exe directory.
+func phpExtDir(phpDir string) string {
+	return filepath.Join(phpDir, "ext")
 }
 
 // buildExtURL constructs the download URL from a pattern and parameters.

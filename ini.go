@@ -20,23 +20,108 @@ func phpIniPath(phpDir string) string {
 	return filepath.Join(phpDir, "php.ini")
 }
 
+// iniKeyRe matches an active (uncommented) assignment of key. The anchor and
+// the trailing "=" keep "pcov.enabled" from matching "pcov.enabled_extra", and
+// a commented line is deliberately not a match so it stays as documentation.
+func iniKeyRe(key string) *regexp.Regexp {
+	return regexp.MustCompile(`^` + regexp.QuoteMeta(key) + `\s*=`)
+}
+
+// hasActiveIniKey reports whether key is assigned by an uncommented line.
+func hasActiveIniKey(lines []string, key string) bool {
+	_, found := iniValue(lines, key)
+	return found
+}
+
+// iniValue returns the value of the last uncommented assignment of key. The last
+// one wins, matching how PHP itself reads a php.ini.
+func iniValue(lines []string, key string) (value string, found bool) {
+	re := iniKeyRe(key)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !re.MatchString(trimmed) {
+			continue
+		}
+		_, v, _ := strings.Cut(trimmed, "=")
+		value = strings.TrimSpace(v)
+		found = true
+	}
+	return value, found
+}
+
+// iniTruthy interprets a php.ini boolean the way PHP does.
+func iniTruthy(value string) bool {
+	switch strings.ToLower(strings.Trim(value, `"'`)) {
+	case "", "0", "off", "false", "no", "none":
+		return false
+	default:
+		return true
+	}
+}
+
 // ensureIniValue ensures a key=value line exists after the given anchor index.
 // If it already exists, updates the value. Otherwise inserts after anchor.
 func ensureIniValue(lines []string, anchorIdx int, key, value string) []string {
+	re := iniKeyRe(key)
 	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, key) {
-			parts := strings.SplitN(trimmed, "=", 2)
-			if len(parts) == 2 {
-				lines[i] = key + "=" + value
-				return lines
-			}
+		if re.MatchString(strings.TrimSpace(line)) {
+			lines[i] = key + "=" + value
+			return lines
 		}
 	}
 	// Not found — insert after anchor
 	insert := key + "=" + value
 	after := anchorIdx + 1
 	return slices.Insert(lines, after, insert)
+}
+
+// applyIniDefaults writes an extension's default directives below its own
+// extension= line. A key already assigned is left alone: these are defaults for
+// a fresh install, not values Shepherd keeps ownership of.
+func applyIniDefaults(iniPath, extName string, defaults [][2]string) error {
+	if len(defaults) == 0 {
+		return nil
+	}
+
+	data, err := os.ReadFile(iniPath)
+	if err != nil {
+		return fmt.Errorf("cannot read %s: %w", iniPath, err)
+	}
+	lines := strings.Split(string(data), "\n")
+
+	var missing []string
+	for _, kv := range defaults {
+		if hasActiveIniKey(lines, kv[0]) {
+			continue
+		}
+		missing = append(missing, kv[0]+"="+kv[1])
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+
+	anchorRe := regexp.MustCompile(`(?i)^(zend_)?extension\s*=\s*` + regexp.QuoteMeta(extName) + `\s*$`)
+	anchorIdx := -1
+	for i, line := range lines {
+		if anchorRe.MatchString(strings.TrimSpace(line)) {
+			anchorIdx = i
+			break
+		}
+	}
+
+	if anchorIdx == -1 {
+		lines = append(lines, missing...)
+	} else {
+		lines = slices.Insert(lines, anchorIdx+1, missing...)
+	}
+
+	if err := writeIni(iniPath, lines); err != nil {
+		return err
+	}
+	for _, entry := range missing {
+		fmt.Printf("  ✅ Added %s to php.ini\n", entry)
+	}
+	return nil
 }
 
 // writeIni writes lines back to the php.ini file.
