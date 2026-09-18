@@ -64,27 +64,27 @@ That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in 
 
 ## Commands
 
-| Command              | Description                                                          |
-|----------------------|----------------------------------------------------------------------|
-| `shp use [version]`  | Set the PHP version for the current project (`latest`, `auto`)       |
-| `shp run <ver> -- …` | Run a command with a specific PHP version                            |
-| `shp which`          | Show resolved PHP path and source                                    |
-| `shp current`        | Print the resolved PHP version                                       |
-| `shp list`, `ls`     | List available PHP versions                                          |
-| `shp status`         | Show configuration overview                                          |
-| `shp xdebug <cmd>`   | Manage xdebug (`on`, `off`, `toggle`, `profile`, `trace`, `run`)     |
-| `shp ext add <name>` | Install a PHP extension (DLL + deps + ini)                           |
-| `shp ext list`       | List installed extensions (alias `ls`)                               |
-| `shp ext remove <n>` | Remove an installed extension (alias `rm`)                           |
-| `shp coverage <cmd>` | Manage the code coverage driver (`status`, `install`, `run`)          |
-| `shp reverb [cmd]`   | Show Laravel Reverb status (`status`, `env`)                          |
-| `shp doctor`         | Diagnose common setup issues                                         |
-| `shp self-update`    | Update to the latest release (SHA256-verified)                       |
-| `shp install`        | Install shims and configure PATH                                     |
-| `shp guard <cmd>`    | Manage the optional PATH Guard (`enable`, `disable`, `status`)       |
-| `shp uninstall`      | Remove shims and restore PATH                                        |
-| `shp version`        | Show current version (`--version`, `-v`)                             |
-| `shp help`           | Show built-in help (`-h`, `--help`)                                  |
+| Command              | Description                                                                |
+|----------------------|----------------------------------------------------------------------------|
+| `shp use [version]`  | Set the PHP version for the current project (`latest`, `auto`)             |
+| `shp run <ver> -- …` | Run a command with a specific PHP version                                  |
+| `shp which`          | Show resolved PHP path and source                                          |
+| `shp current`        | Print the resolved PHP version                                             |
+| `shp list`, `ls`     | List available PHP versions                                                |
+| `shp status`         | Show configuration overview                                                |
+| `shp xdebug <cmd>`   | Manage xdebug (`on`, `off`, `toggle`, `profile`, `trace`, `status`, `run`) |
+| `shp ext add <name>` | Install a PHP extension (DLL + deps + ini)                                 |
+| `shp ext list`       | List installed extensions (alias `ls`)                                     |
+| `shp ext remove <n>` | Remove an installed extension (alias `rm`)                                 |
+| `shp coverage <cmd>` | Manage the code coverage driver (`status`, `install`, `run`)               |
+| `shp reverb [cmd]`   | Show Laravel Reverb status (`status`, `env`)                               |
+| `shp doctor`         | Diagnose common setup issues                                               |
+| `shp self-update`    | Update to the latest release (SHA256-verified)                             |
+| `shp install`        | Install shims and configure PATH                                           |
+| `shp guard <cmd>`    | Manage the optional PATH Guard (`enable`, `disable`, `status`)             |
+| `shp uninstall`      | Remove shims and restore PATH                                              |
+| `shp version`        | Show current version (`--version`, `-v`)                                   |
+| `shp help`           | Show built-in help (`-h`, `--help`)                                        |
 
 ### Global flags
 
@@ -97,15 +97,15 @@ That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in 
 
 ### Command flags
 
-| Flag                    | Applies to     | Description                                       |
-|-------------------------|----------------|---------------------------------------------------|
-| `--force`, `-f`         | `install`      | Reinstall, killing running shim processes first   |
-| `--enable-path-guard`   | `install`      | Enable the PATH Guard without prompting           |
-| `--php=X.Y`, `--php=all`| `ext *`        | Target a specific PHP version, or all of them     |
-| `--ext-version=V`       | `ext add`      | Pin the extension version (default: latest PECL)  |
-| `--ts`                  | `ext add`      | Use the Thread Safe build (default: NTS)          |
-| `--vs=vsNN`             | `ext add`      | Visual Studio build tag (default: derived from the PHP version) |
-| `--port=PORT`           | `reverb`       | Reverb listen port (default: 8443)                |
+| Flag                     | Applies to | Description                                                     |
+|--------------------------|------------|-----------------------------------------------------------------|
+| `--force`, `-f`          | `install`  | Reinstall, killing running shim processes first                 |
+| `--enable-path-guard`    | `install`  | Enable the PATH Guard without prompting                         |
+| `--php=X.Y`, `--php=all` | `ext *`    | Target a specific PHP version, or all of them                   |
+| `--ext-version=V`        | `ext add`  | Pin the extension version (default: latest PECL)                |
+| `--ts`                   | `ext add`  | Use the Thread Safe build (default: NTS)                        |
+| `--vs=vsNN`              | `ext add`  | Visual Studio build tag (default: derived from the PHP version) |
+| `--port=PORT`            | `reverb`   | Reverb listen port (default: 8443)                              |
 
 ## Xdebug management
 

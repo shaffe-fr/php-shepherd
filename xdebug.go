@@ -67,45 +67,49 @@ func rewriteXdebugArgs(args []string, version string) []string {
 	return result
 }
 
+// xdebugUsage prints the xdebug command help.
+func xdebugUsage() {
+	if emitHelpJSON("xdebug", "shp xdebug <command>",
+		"Manage xdebug for the resolved PHP version") {
+		return
+	}
+	fmt.Println("Usage: shp xdebug <command>")
+	fmt.Println()
+	fmt.Println("Manage xdebug for the resolved PHP version.")
+	fmt.Println()
+	fmt.Println("Commands:")
+	fmt.Println("  toggle          Toggle xdebug on/off")
+	fmt.Println("  on              Enable with debugging mode (alias for debug)")
+	fmt.Println("  debug           Enable with debugging mode")
+	fmt.Println("  coverage        Enable with code coverage mode")
+	fmt.Println("  debug,coverage  Enable with both")
+	fmt.Println("  profile         Enable with profiling mode")
+	fmt.Println("  trace           Enable with function trace mode")
+	fmt.Println("  off             Disable xdebug")
+	fmt.Println("  status          Show current xdebug state")
+	fmt.Println("  run <mode> -- <command...>")
+	fmt.Println("                  Stateless: run a single command with xdebug (one-off)")
+}
+
 // cmdXdebug manages xdebug in the php.ini for the resolved PHP version.
 //
 // Usage:
 //
-//	shp xdebug                Show current status (no active change)
+//	shp xdebug                Show usage
 //	shp xdebug toggle         Toggle xdebug on/off
 //	shp xdebug <mode>         Enable xdebug with a specific mode
 //	shp xdebug off            Disable xdebug
 //	shp xdebug status         Show current xdebug state
 func cmdXdebug() {
-	// Without arguments, show status (non-active — like other commands)
 	if len(os.Args) <= 2 {
-		cmdXdebugShowStatus()
+		xdebugUsage()
 		return
 	}
 
 	mode := strings.ToLower(os.Args[2])
 
-	if mode == "-h" || mode == "--help" {
-		if emitHelpJSON("xdebug", "shp xdebug <command>",
-			"Manage xdebug for the resolved PHP version") {
-			return
-		}
-		fmt.Println("Usage: shp xdebug <command>")
-		fmt.Println()
-		fmt.Println("Manage xdebug for the resolved PHP version.")
-		fmt.Println()
-		fmt.Println("Commands:")
-		fmt.Println("  toggle          Toggle xdebug on/off")
-		fmt.Println("  on              Enable with debugging mode (alias for debug)")
-		fmt.Println("  debug           Enable with debugging mode")
-		fmt.Println("  coverage        Enable with code coverage mode")
-		fmt.Println("  debug,coverage  Enable with both")
-		fmt.Println("  profile         Enable with profiling mode")
-		fmt.Println("  trace           Enable with function trace mode")
-		fmt.Println("  off             Disable xdebug")
-		fmt.Println("  status          Show current xdebug state")
-		fmt.Println("  run <mode> -- <command...>")
-		fmt.Println("                  Stateless: run a single command with xdebug (one-off)")
+	if mode == "-h" || mode == "--help" || mode == "help" {
+		xdebugUsage()
 		return
 	}
 
@@ -349,41 +353,6 @@ func xdebugRestartNginx() {
 	if !jsonOutput {
 		fmt.Println("  ↻ nginx restarted")
 	}
-}
-
-// cmdXdebugShowStatus resolves the PHP version and shows the current xdebug state.
-// Called when `shp xdebug` is invoked without arguments.
-func cmdXdebugShowStatus() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: cannot get working directory: %v\n", err)
-		os.Exit(1)
-	}
-
-	phpPath, version, err := resolveCurrentPHP(cwd)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	phpDir := filepath.Dir(phpPath)
-
-	if version == "" {
-		fmt.Fprintf(os.Stderr, "Error: could not determine PHP version\n")
-		os.Exit(1)
-	}
-
-	iniPath := phpIniPath(phpDir)
-	data, err := os.ReadFile(iniPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading php.ini: %v\n", err)
-		os.Exit(1)
-	}
-	lines := strings.Split(string(data), "\n")
-
-	if !jsonOutput {
-		fmt.Printf("PHP %s — %s\n", version, iniPath)
-	}
-	xdebugStatus(lines, version)
 }
 
 // xdebugStatus prints the current xdebug state from php.ini lines.

@@ -124,17 +124,17 @@ func planCoverage(d coverageDrivers) (coveragePlan, error) {
 //
 // Usage:
 //
-//	shp coverage                        Show which driver would be used
-//	shp coverage status                 Same, explicitly
+//	shp coverage                        Show usage
+//	shp coverage status                 Show which driver would be used
 //	shp coverage install [--php=all]    Install pcov
 //	shp coverage run -- <command...>    Run a command with coverage enabled
 func cmdCoverage() {
-	sub := "status"
-	if len(os.Args) > 2 {
-		sub = strings.ToLower(os.Args[2])
+	if len(os.Args) <= 2 {
+		coverageUsage()
+		return
 	}
 
-	switch sub {
+	switch strings.ToLower(os.Args[2]) {
 	case "-h", "--help", "help":
 		coverageUsage()
 	case "status":
@@ -144,7 +144,7 @@ func cmdCoverage() {
 	case "run":
 		cmdCoverageRun()
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown coverage command: %s\n", sub)
+		fmt.Fprintf(os.Stderr, "Unknown coverage command: %s\n", os.Args[2])
 		coverageUsage()
 		os.Exit(1)
 	}
