@@ -58,7 +58,7 @@ That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in 
 
 1. Reads `.phpversion` from the current directory, walking up the tree (like `.nvmrc`)
 2. Resolves the matching `php.exe` from Herd's installs (`~/.config/herd/bin/phpXX/`)
-3. Falls back to `herd.phar which-php` when no dotfile is found
+3. Falls back to `herd.phar which-php` when no dotfile is found, or to Herd's global version (`herd\bin\php.bat`) when the Herd app is closed
 4. Syncs Herd's nginx config so your `.test` domain matches the CLI version
 5. Execs the real `php.exe` — transparent, no wrapper overhead
 
@@ -66,7 +66,7 @@ That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in 
 
 | Command              | Description                                                                |
 |----------------------|----------------------------------------------------------------------------|
-| `shp use [version]`  | Set the PHP version for the current project (`latest`, `auto`)             |
+| `shp use [version]`  | Set the project's PHP version (`latest`, `auto`); lists versions if omitted |
 | `shp run <ver> -- …` | Run a command with a specific PHP version                                  |
 | `shp which`          | Show resolved PHP path and source                                          |
 | `shp current`        | Print the resolved PHP version                                             |
