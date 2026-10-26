@@ -870,3 +870,56 @@ func TestInstallStaysInSandbox(t *testing.T) {
 		t.Error("install modified the real HKCU User PATH")
 	}
 }
+
+// TestHelpFlagNeverRunsTheCommand covers commands without their own help
+// handler: `uninstall --help` used to uninstall and `install --help` to install.
+func TestHelpFlagNeverRunsTheCommand(t *testing.T) {
+	profile := fakeHerd(t, []string{"8.4"})
+	env := baseEnv(profile)
+	shimBin := filepath.Join(profile, ".config", "shepherd", "bin")
+
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"install", "--help"}, "Usage: shp install"},
+		{[]string{"install", "--force", "-h"}, "--enable-path-guard"},
+		{[]string{"uninstall", "--help"}, "Usage: shp uninstall"},
+		{[]string{"self-update", "--help"}, "Usage: shp self-update"},
+		{[]string{"use", "--help"}, "latest"},
+		{[]string{"doctor", "--help"}, "Usage: shp doctor"},
+		{[]string{"status", "--help"}, "Usage: shp status"},
+		{[]string{"which", "--help"}, "Usage: shp which"},
+		{[]string{"current", "--help"}, "Usage: shp current"},
+		{[]string{"ls", "--help"}, "Usage: shp list"},
+		{[]string{"ext", "add", "--help"}, "Usage: shp ext"},
+	}
+	for _, c := range cases {
+		t.Run(strings.Join(c.args, " "), func(t *testing.T) {
+			res := runShp(t, c.args, env)
+			if res.ExitCode != 0 {
+				t.Fatalf("exit code %d, stderr: %s", res.ExitCode, res.Stderr)
+			}
+			if !strings.Contains(res.Stdout, c.want) {
+				t.Errorf("expected %q in help, got: %s", c.want, res.Stdout)
+			}
+			if _, err := os.Stat(shimBin); err == nil {
+				entries, _ := os.ReadDir(shimBin)
+				if len(entries) > 0 {
+					t.Errorf("help request created files in %s", shimBin)
+				}
+			}
+		})
+	}
+
+	t.Run("json help", func(t *testing.T) {
+		res := runShp(t, []string{"--json", "uninstall", "--help"}, env)
+		var out map[string]string
+		if err := json.Unmarshal([]byte(res.Stdout), &out); err != nil {
+			t.Fatalf("invalid JSON: %v\n%s", err, res.Stdout)
+		}
+		if out["command"] != "uninstall" {
+			t.Errorf("command = %q, want uninstall", out["command"])
+		}
+	})
+}

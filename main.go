@@ -392,6 +392,16 @@ func main() {
 		}
 
 		explicitHelp := false
+		if len(os.Args) > 2 && hasHelpFlag(os.Args[2:]) {
+			name := os.Args[1]
+			if name == "ls" {
+				name = "list"
+			}
+			if h, ok := simpleCommandHelp[name]; ok {
+				printCommandHelp(name, h)
+				return
+			}
+		}
 		if len(os.Args) > 1 {
 			switch os.Args[1] {
 			case "use":
@@ -493,7 +503,7 @@ func main() {
 			}{
 				Version: version,
 				Commands: []cmdInfo{
-					{Name: "use", Description: "Set the PHP version for the current project (.phpversion)"},
+					{Name: "use", Description: "Set the PHP version for the current project (.phpversion; latest, auto)"},
 					{Name: "run", Description: "Run a command with a specific PHP version"},
 					{Name: "which", Description: "Show resolved PHP executable path and source"},
 					{Name: "current", Description: "Print the resolved PHP version number"},
@@ -503,7 +513,7 @@ func main() {
 					{Name: "ext", Description: "Manage PHP extensions (add, list, remove)"},
 					{Name: "coverage", Description: "Manage the code coverage driver (pcov, xdebug)"},
 					{Name: "reverb", Description: "Show Reverb status and .env configuration"},
-					{Name: "install", Description: "Install php.exe and composer.exe shims and configure PATH"},
+					{Name: "install", Description: "Install the php, composer and shp shims and configure PATH (--force, --enable-path-guard)"},
 					{Name: "guard", Description: "Manage the optional PATH Guard that keeps Shepherd ahead of Herd"},
 					{Name: "uninstall", Description: "Remove shims and restore PATH"},
 					{Name: "doctor", Description: "Diagnose common issues with Shepherd setup"},
@@ -527,7 +537,7 @@ func main() {
 		fmt.Println("Shepherd - Per-project PHP on Windows, done right.")
 		fmt.Println()
 		fmt.Println("Commands:")
-		fmt.Println("  use         Set the PHP version for the current project (.phpversion)")
+		fmt.Println("  use         Set the PHP version for the current project (.phpversion; latest, auto)")
 		fmt.Println("  run         Run a command with a specific PHP version")
 		fmt.Println("  which       Show resolved PHP executable path and source")
 		fmt.Println("  current     Print the resolved PHP version number")
@@ -537,7 +547,7 @@ func main() {
 		fmt.Println("  ext         Manage PHP extensions (add, list, remove)")
 		fmt.Println("  coverage    Manage the code coverage driver (pcov, xdebug)")
 		fmt.Println("  reverb      Show Reverb status and .env configuration")
-		fmt.Println("  install     Install php.exe and composer.exe shims and configure PATH")
+		fmt.Println("  install     Install the php, composer and shp shims and configure PATH (--force, --enable-path-guard)")
 		fmt.Println("  guard       Manage the optional PATH Guard that keeps Shepherd ahead of Herd")
 		fmt.Println("  uninstall   Remove shims and restore PATH")
 		fmt.Println("  doctor      Diagnose common issues with Shepherd setup")
@@ -551,6 +561,7 @@ func main() {
 		fmt.Println("  --json            Output machine-readable JSON (for scripts and LLMs)")
 		fmt.Println("  --no-interactive  Skip interactive prompts (auto-detected when stdin is not a terminal)")
 		fmt.Println()
+		fmt.Println("Run `shp <command> --help` for the options of a command.")
 		fmt.Println("When invoked as php.exe or composer.exe, acts as a transparent PHP version switcher.")
 		return
 	}
@@ -1235,6 +1246,87 @@ func emitHelpJSON(command, usage, description string) bool {
 		"description": description,
 	})
 	return true
+}
+
+type commandHelp struct {
+	usage       string
+	description string
+	details     []string
+}
+
+// simpleCommandHelp covers the commands that have no help handler of their own.
+// Without it, `shp uninstall --help` would uninstall. None of them forwards
+// arguments to a child process, so -h/--help anywhere is a help request.
+var simpleCommandHelp = map[string]commandHelp{
+	"use": {
+		usage:       "shp use [version|latest|auto]",
+		description: "Set the PHP version for the current project (.phpversion)",
+		details: []string{
+			"Without a version, lists the available PHP versions.",
+			"",
+			"  X.Y      Pin an installed version, e.g. 8.4",
+			"  latest   Pin the highest installed version",
+			"  auto     Pick the highest version satisfying composer.json require.php",
+		},
+	},
+	"install": {
+		usage:       "shp install [--force] [--enable-path-guard]",
+		description: "Install the php.exe, composer.exe and shp.exe shims and put them first in User PATH",
+		details: []string{
+			"  --force, -f           Reinstall, killing running shim processes first",
+			"  --enable-path-guard   Enable the PATH Guard without prompting",
+		},
+	},
+	"uninstall": {
+		usage:       "shp uninstall",
+		description: "Remove the shims, the PATH Guard and the Shepherd entry from User PATH",
+	},
+	"status": {
+		usage:       "shp status",
+		description: "Show the resolved PHP versions, xdebug state, shims and PATH configuration",
+	},
+	"doctor": {
+		usage:       "shp doctor",
+		description: "Diagnose common setup issues (Herd, PATH order, aliases, nginx, PHP-CGI ports)",
+	},
+	"self-update": {
+		usage:       "shp self-update",
+		description: "Update Shepherd to the latest release (SHA256-verified)",
+	},
+	"which": {
+		usage:       "shp which",
+		description: "Show the resolved PHP executable path and where the version came from",
+	},
+	"current": {
+		usage:       "shp current",
+		description: "Print the resolved PHP version number",
+	},
+	"list": {
+		usage:       "shp list",
+		description: "List available PHP versions (alias: ls)",
+	},
+}
+
+func hasHelpFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
+func printCommandHelp(command string, h commandHelp) {
+	if emitHelpJSON(command, h.usage, h.description) {
+		return
+	}
+	fmt.Printf("Usage: %s\n\n%s.\n", h.usage, h.description)
+	if len(h.details) > 0 {
+		fmt.Println()
+		for _, line := range h.details {
+			fmt.Println(line)
+		}
+	}
 }
 
 // subcommandArgs returns the arguments following the subcommand name.

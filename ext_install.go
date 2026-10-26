@@ -51,8 +51,8 @@ func extUsage() {
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  add <name>      Install a PHP extension from PECL")
-	fmt.Println("  list            List installed extensions")
-	fmt.Println("  remove <name>   Remove an installed extension")
+	fmt.Println("  list, ls        List installed extensions")
+	fmt.Println("  remove, rm <n>  Remove an installed extension")
 	fmt.Println()
 	fmt.Println("Supported extensions for 'add':")
 	fmt.Printf("  %s\n", strings.Join(listSupportedExtensions(), ", "))
@@ -74,6 +74,10 @@ func cmdExtInstall() {
 	}
 
 	extName := os.Args[3]
+	if extName == "-h" || extName == "--help" {
+		extUsage()
+		return
+	}
 
 	// Validate against supported extensions
 	extDef, ok := extensionRegistry[strings.ToLower(extName)]
