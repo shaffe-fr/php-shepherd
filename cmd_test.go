@@ -813,6 +813,24 @@ func TestExtVersionPatterns(t *testing.T) {
 	}
 }
 
+func TestWhichFallsBackToHerdGlobalWhenHerdIsClosed(t *testing.T) {
+	profile := fakeHerd(t, []string{"8.4", "8.5"})
+	env := baseEnv(profile)
+	writeHerdPhpBat(t, profile, filepath.Join(profile, ".config", "herd", "bin", "php84", "php.exe"))
+
+	res := runShp(t, []string{"--json", "which"}, env)
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code %d, stderr: %s", res.ExitCode, res.Stderr)
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal([]byte(res.Stdout), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, res.Stdout)
+	}
+	if out["version"] != "8.4" {
+		t.Errorf("version = %v, want 8.4", out["version"])
+	}
+}
+
 // TestInstallStaysInSandbox guards against tests rewriting the developer's
 // real User PATH or PATH Guard task, which install used to do.
 func TestInstallStaysInSandbox(t *testing.T) {

@@ -775,3 +775,73 @@ func TestKillShimProcessesLeavesUnrelatedProcesses(t *testing.T) {
 		t.Fatal("current process died during killShimProcesses")
 	}
 }
+
+// writeHerdPhpBat mimics the bin\php.bat Herd writes for its global version.
+func writeHerdPhpBat(t *testing.T, profile, target string) {
+	t.Helper()
+	bat := "@echo off\r\n\"" + target + "\" %*"
+	if err := os.WriteFile(filepath.Join(profile, ".config", "herd", "bin", "php.bat"), []byte(bat), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHerdGlobalPHP(t *testing.T) {
+	profile := fakeHerd(t, []string{"8.3", "8.4", "8.5"})
+	t.Setenv("USERPROFILE", profile)
+	herdBin := filepath.Join(profile, ".config", "herd", "bin")
+
+	t.Run("reads the php.exe php.bat forwards to", func(t *testing.T) {
+		writeHerdPhpBat(t, profile, filepath.Join(herdBin, "php84", "php.exe"))
+		got, err := herdGlobalPHP()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if extractVersion(got) != "8.4" {
+			t.Errorf("got %s, want the php84 build", got)
+		}
+	})
+
+	t.Run("rejects a target outside Herd", func(t *testing.T) {
+		outside := filepath.Join(t.TempDir(), "php.exe")
+		if err := os.WriteFile(outside, []byte("fake"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		writeHerdPhpBat(t, profile, outside)
+		if _, err := herdGlobalPHP(); err == nil {
+			t.Error("expected an error for a php.exe outside the Herd directory")
+		}
+	})
+
+	t.Run("errors without php.bat", func(t *testing.T) {
+		_ = os.Remove(filepath.Join(herdBin, "php.bat"))
+		if _, err := herdGlobalPHP(); err == nil {
+			t.Error("expected an error when php.bat is missing")
+		}
+	})
+}
+
+// The fake php.exe cannot run herd.phar, which reproduces which-php failing
+// while the Herd desktop app is closed.
+func TestResolveHerdDefaultPHPFallsBackWhenWhichPHPFails(t *testing.T) {
+	profile := fakeHerd(t, []string{"8.4", "8.5"})
+	t.Setenv("USERPROFILE", profile)
+	writeHerdPhpBat(t, profile, filepath.Join(profile, ".config", "herd", "bin", "php84", "php.exe"))
+
+	got, err := resolveHerdDefaultPHP(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if extractVersion(got) != "8.4" {
+		t.Errorf("got %s, want Herd's global 8.4 rather than the most recent 8.5", got)
+	}
+}
+
+func TestResolveHerdDefaultPHPReportsHerdNotRunning(t *testing.T) {
+	profile := fakeHerd(t, []string{"8.4"})
+	t.Setenv("USERPROFILE", profile)
+
+	_, err := resolveHerdDefaultPHP(profile)
+	if err == nil || !strings.Contains(err.Error(), "Herd app running") {
+		t.Errorf("expected a hint about the Herd app, got: %v", err)
+	}
+}

@@ -134,17 +134,49 @@ func resolveCurrentPHP(cwd string) (phpPath, version string, err error) {
 		}
 		return phpPath, version, nil
 	}
-	// Fallback: ask herd.phar which-php
-	bootstrap, err := mostRecentPHP()
-	if err != nil {
-		return "", "", err
-	}
-	phpPath, err = whichPHP(bootstrap, cwd)
+	phpPath, err = resolveHerdDefaultPHP(cwd)
 	if err != nil {
 		return "", "", err
 	}
 	version = extractVersion(phpPath)
 	return phpPath, version, nil
+}
+
+// resolveHerdDefaultPHP returns the PHP Herd would use for dir when no
+// .phpversion applies. herd.phar which-php refuses to answer while the Herd
+// desktop app is closed, so Herd's global php.bat is read instead in that case.
+func resolveHerdDefaultPHP(dir string) (string, error) {
+	bootstrap, err := mostRecentPHP()
+	if err != nil {
+		return "", err
+	}
+	php, whichErr := whichPHP(bootstrap, dir)
+	if whichErr == nil {
+		return php, nil
+	}
+	logVerbose("%v, falling back to Herd's global php.bat", whichErr)
+	php, globalErr := herdGlobalPHP()
+	if globalErr != nil {
+		return "", fmt.Errorf("%v (is the Herd app running?); global fallback: %v", whichErr, globalErr)
+	}
+	return php, nil
+}
+
+// herdBatTargetRe captures the php.exe that Herd's php.bat forwards to.
+var herdBatTargetRe = regexp.MustCompile(`(?i)"([^"]+\\php\.exe)"`)
+
+// herdGlobalPHP reads the global PHP version Herd configured in bin\php.bat,
+// which Herd rewrites whenever the global version changes in its UI.
+func herdGlobalPHP() (string, error) {
+	data, err := os.ReadFile(filepath.Join(herdHome(), "php.bat"))
+	if err != nil {
+		return "", err
+	}
+	m := herdBatTargetRe.FindSubmatch(data)
+	if m == nil {
+		return "", fmt.Errorf("no php.exe path found in php.bat")
+	}
+	return validateHerdPHPPath(string(m[1]))
 }
 
 // mostRecentPHP finds the highest-versioned php.exe under Herd.
@@ -180,17 +212,21 @@ func whichPHP(bootstrapPHP, dir string) (string, error) {
 	if php == "" {
 		return "", fmt.Errorf("which-php returned empty")
 	}
-	// Validate that the returned path is under herdHome.
-	// Resolve symlinks/junctions to prevent path traversal via symlink tricks.
+	return validateHerdPHPPath(php)
+}
+
+// validateHerdPHPPath ensures a PHP path reported by Herd exists and lives
+// inside herdHome. Symlinks/junctions are resolved to prevent traversal tricks.
+func validateHerdPHPPath(php string) (string, error) {
 	absPhp, err := filepath.Abs(php)
 	if err != nil {
-		return "", fmt.Errorf("invalid path from which-php: %w", err)
+		return "", fmt.Errorf("invalid PHP path from Herd: %w", err)
 	}
 	// EvalSymlinks resolves symlinks AND cleans the path; if the target doesn't exist
 	// it fails, which is fine (we want an existing php.exe).
 	realPhp, err := filepath.EvalSymlinks(absPhp)
 	if err != nil {
-		return "", fmt.Errorf("cannot resolve which-php path: %w", err)
+		return "", fmt.Errorf("cannot resolve PHP path from Herd: %w", err)
 	}
 	absHerd, _ := filepath.Abs(herdHome())
 	realHerd, _ := filepath.EvalSymlinks(absHerd)
@@ -200,7 +236,7 @@ func whichPHP(bootstrapPHP, dir string) (string, error) {
 	// Ensure the returned path is the Herd dir itself or strictly inside it.
 	// A plain HasPrefix check would wrongly accept siblings like "...\bin-evil".
 	if realPhpLower != realHerdLower && !strings.HasPrefix(realPhpLower, realHerdLower+sep) {
-		return "", fmt.Errorf("which-php returned path outside Herd directory: %s", php)
+		return "", fmt.Errorf("herd returned PHP path outside Herd directory: %s", php)
 	}
 	return realPhp, nil
 }
@@ -570,12 +606,7 @@ func main() {
 	} else {
 		// 2. Fallback: ask herd.phar which-php
 		logVerbose("no .phpversion found, falling back to herd.phar which-php")
-		bootstrap, berr := mostRecentPHP()
-		if berr != nil {
-			fmt.Fprintf(os.Stderr, "shp: %v\n", berr)
-			os.Exit(1)
-		}
-		targetPHP, err = whichPHP(bootstrap, cwd)
+		targetPHP, err = resolveHerdDefaultPHP(cwd)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "shp: %v\n", err)
 			os.Exit(1)
@@ -664,13 +695,7 @@ func cmdWhich() {
 		}
 		source = ".phpversion"
 	} else {
-		// Fallback to herd.phar which-php
-		bootstrap, berr := mostRecentPHP()
-		if berr != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", berr)
-			os.Exit(1)
-		}
-		phpPath, err = whichPHP(bootstrap, cwd)
+		phpPath, err = resolveHerdDefaultPHP(cwd)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -1407,7 +1432,10 @@ func cmdStatus() {
 		localVersion = findPHPVersion(cwd)
 	}
 
-	globalPHP, globalErr := mostRecentPHP()
+	globalPHP, globalErr := herdGlobalPHP()
+	if globalErr != nil {
+		globalPHP, globalErr = mostRecentPHP()
+	}
 	globalVersion := ""
 	if globalErr == nil {
 		globalVersion = extractVersion(globalPHP)
