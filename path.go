@@ -15,8 +15,24 @@ func shimDir() string {
 	return filepath.Join(os.Getenv("USERPROFILE"), ".config", "shepherd", "bin")
 }
 
+// userPathFileEnv redirects User PATH reads and writes to a plain file.
+// Subprocess tests only isolate USERPROFILE, so without it any test reaching
+// install/uninstall rewrites the developer's real HKCU\Environment\Path.
+const userPathFileEnv = "SHEPHERD_TEST_USER_PATH_FILE"
+
 // getUserPath reads the User PATH from the registry.
 func getUserPath() (string, uint32, error) {
+	if file := os.Getenv(userPathFileEnv); file != "" {
+		data, err := os.ReadFile(file)
+		if os.IsNotExist(err) {
+			return "", registry.EXPAND_SZ, nil
+		}
+		return string(data), registry.EXPAND_SZ, err
+	}
+	return userPathFromRegistry()
+}
+
+func userPathFromRegistry() (string, uint32, error) {
 	key, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE)
 	if err != nil {
 		return "", 0, err
@@ -31,6 +47,9 @@ func getUserPath() (string, uint32, error) {
 
 // setUserPath writes the User PATH to the registry preserving the original type (REG_EXPAND_SZ or REG_SZ).
 func setUserPath(path string, valType uint32) error {
+	if file := os.Getenv(userPathFileEnv); file != "" {
+		return os.WriteFile(file, []byte(path), 0o600)
+	}
 	key, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.SET_VALUE)
 	if err != nil {
 		return err

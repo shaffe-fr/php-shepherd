@@ -41,6 +41,11 @@ func pathGuardTaskName() string {
 // runScheduledTask executes schtasks.exe from System32. It is replaceable in
 // tests so task registration can be verified without touching the host system.
 var runScheduledTask = func(args ...string) error {
+	// The task name is keyed on the user SID, not USERPROFILE, so a sandboxed
+	// subprocess test would otherwise replace the developer's real guard task.
+	if os.Getenv(userPathFileEnv) != "" {
+		return fmt.Errorf("scheduled tasks are disabled in the test sandbox")
+	}
 	systemRoot := os.Getenv("SystemRoot")
 	schtasks := "schtasks.exe"
 	if systemRoot != "" {

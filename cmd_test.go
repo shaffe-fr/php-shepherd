@@ -58,6 +58,9 @@ func runBinary(t *testing.T, binPath string, args []string, env map[string]strin
 		"PATH=" + os.Getenv("PATH"),
 		"PROGRAMFILES=" + os.Getenv("PROGRAMFILES"),
 	}
+	if _, ok := env[userPathFileEnv]; !ok {
+		cmd.Env = append(cmd.Env, userPathFileEnv+"="+filepath.Join(t.TempDir(), "user-path.txt"))
+	}
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
@@ -155,7 +158,8 @@ func fakeHerd(t *testing.T, versions []string) string {
 // baseEnv returns the standard env map for tests using a fake herd root.
 func baseEnv(userProfile string) map[string]string {
 	return map[string]string{
-		"USERPROFILE": userProfile,
+		"USERPROFILE":   userProfile,
+		userPathFileEnv: filepath.Join(userProfile, "user-path.txt"),
 	}
 }
 
@@ -806,5 +810,45 @@ func TestExtVersionPatterns(t *testing.T) {
 		if vsVersionRe.MatchString(v) {
 			t.Errorf("vsVersionRe accepted invalid value %q", v)
 		}
+	}
+}
+
+// TestInstallStaysInSandbox guards against tests rewriting the developer's
+// real User PATH or PATH Guard task, which install used to do.
+func TestInstallStaysInSandbox(t *testing.T) {
+	profile := fakeHerd(t, []string{"8.4"})
+	env := baseEnv(profile)
+	pathFile := env[userPathFileEnv]
+	if err := os.WriteFile(pathFile, []byte(`C:\Existing`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	realBefore, _, err := userPathFromRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := runShp(t, []string{"install", "--no-interactive", "--enable-path-guard"}, env)
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code %d, stderr: %s", res.ExitCode, res.Stderr)
+	}
+
+	data, err := os.ReadFile(pathFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFirst := filepath.Join(profile, ".config", "shepherd", "bin")
+	if !strings.HasPrefix(string(data), wantFirst+";") {
+		t.Errorf("sandbox PATH = %q, want it to start with %s", data, wantFirst)
+	}
+	if !strings.Contains(res.Stderr, "test sandbox") {
+		t.Errorf("expected the PATH Guard to be refused in the sandbox, stderr: %s", res.Stderr)
+	}
+
+	realAfter, _, err := userPathFromRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if realAfter != realBefore {
+		t.Error("install modified the real HKCU User PATH")
 	}
 }
