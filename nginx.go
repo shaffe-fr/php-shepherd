@@ -28,8 +28,11 @@ func findNginxConfsForProject(physicalDir string) []string {
 	var domains []string
 
 	// Herd 2 workspaces: the registry names the exact host, which wins
-	// over the filesystem scan below when both apply.
-	if rec := findWorkspaceRecord(physicalDir); rec != nil {
+	// over the filesystem scan below when both apply. This result leads to
+	// a rewritten file, so a checkout marker only counts when a registry
+	// entry or a Sites link vouches for it: a committed marker must not be
+	// able to retarget another site's conf.
+	if rec := findAssociatedWorkspaceRecord(physicalDir); rec != nil {
 		if host := workspaceHost(*rec); host != "" {
 			domains = append(domains, host)
 		}
@@ -66,6 +69,11 @@ func findNginxConfsForProject(physicalDir string) []string {
 		}
 		seen[confName] = true
 		confPath := filepath.Join(confDir, confName)
+		if filepath.Dir(confPath) != filepath.Clean(confDir) {
+			// A host carrying separators or ".." must never leave the
+			// nginx directory.
+			continue
+		}
 		if _, err := os.Stat(confPath); err == nil {
 			confs = append(confs, confPath)
 		}

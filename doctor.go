@@ -42,6 +42,10 @@ func cmdDoctor() {
 	herd2AppClosed := checkHerd() && isHerd2() && !herdAppRunning()
 
 	// 0. Check Herd is installed
+	herdVersion := ""
+	if checkHerd() {
+		herdVersion = herdVersionString() // one HTTP round trip, reused below
+	}
 	if !checkHerd() {
 		if !jsonOutput {
 			fmt.Printf("  ✗ Laravel Herd is not installed (expected %s)\n", herdHome())
@@ -51,9 +55,9 @@ func cmdDoctor() {
 		issues++
 	} else {
 		if !jsonOutput {
-			fmt.Printf("  ✓ Laravel Herd found (%s)\n", herdVersionString())
+			fmt.Printf("  ✓ Laravel Herd found (%s)\n", herdVersion)
 		}
-		addCheck("herd", "ok", herdVersionString(), "")
+		addCheck("herd", "ok", herdVersion, "")
 	}
 
 	// 1. Check .phpversion in cwd
@@ -430,7 +434,7 @@ func cmdDoctor() {
 			if !jsonOutput {
 				fmt.Printf("  • Herd 2 app is closed — nginx and PHP-CGI cannot be (re)started until it is opened (CLI PHP is unaffected)\n")
 			}
-			addCheck("herdApp", "warning", "app closed (service restarts unavailable)", "Open the Herd app")
+			addCheck("herdApp", "info", "app closed (service restarts unavailable)", "Open the Herd app")
 		} else {
 			addCheck("herdApp", "ok", "", "")
 		}
@@ -440,17 +444,20 @@ func cmdDoctor() {
 		records := herdWorkspacesRegistry()
 		if len(records) > 0 {
 			var orphans []string
+			var orphanCmds []string
 			sitesDir := herdSitesDir()
 			for _, rec := range records {
 				if rec.Path != "" {
 					if _, err := os.Stat(filepath.FromSlash(rec.Path)); err != nil {
 						orphans = append(orphans, rec.Name)
+						orphanCmds = append(orphanCmds, "herd workspace:delete "+rec.Name+" --force")
 						continue
 					}
 				}
 				if host := workspaceHost(rec); host != "" {
 					if _, err := os.Stat(filepath.Join(sitesDir, host)); err != nil {
 						orphans = append(orphans, rec.Name)
+						orphanCmds = append(orphanCmds, "herd workspace:delete "+rec.Name+" --force")
 						continue
 					}
 				}
@@ -458,9 +465,12 @@ func cmdDoctor() {
 			if len(orphans) > 0 {
 				if !jsonOutput {
 					fmt.Printf("  ⚠ Orphaned workspace records: %s\n", strings.Join(orphans, ", "))
-					fmt.Printf("    → Their checkouts or Sites links are gone; clean them up with `herd workspaces --all`\n")
+					fmt.Printf("    → Their checkouts or Sites links are gone; clean them up with:\n")
+					for _, c := range orphanCmds {
+						fmt.Printf("        %s\n", c)
+					}
 				}
-				addCheck("workspaceOrphans", "warning", strings.Join(orphans, ", "), "herd workspaces --all")
+				addCheck("workspaceOrphans", "warning", strings.Join(orphans, ", "), strings.Join(orphanCmds, "; "))
 				issues += len(orphans)
 			} else {
 				addCheck("workspaceOrphans", "ok", "", "")
@@ -468,22 +478,22 @@ func cmdDoctor() {
 		}
 
 		// Git worktrees of served sites that Herd has not adopted yet:
-		// information only — Herd serves them on demand when visited.
+		// information only — adopting them is optional.
 		if unserved := listUnservedWorktrees(); len(unserved) > 0 {
 			tld := herdTLD()
 			var lines []string
 			for _, wt := range unserved {
-				lines = append(lines, fmt.Sprintf("%s (site %s, branch %s → %s)",
+				lines = append(lines, fmt.Sprintf("%s (site %s, branch %s → would be %s)",
 					wt.Checkout, wt.ParentSite, firstNonEmpty(wt.Branch, "detached"), wt.Domain+"."+tld))
 			}
 			if !jsonOutput {
-				fmt.Printf("  • %d git worktree(s) of served sites not adopted as workspaces yet (served on demand when visited):\n", len(unserved))
+				fmt.Printf("  • %d git worktree(s) of served sites not adopted as workspaces yet (not served until adopted):\n", len(unserved))
 				for _, l := range lines {
 					fmt.Printf("      %s\n", l)
 				}
 				fmt.Printf("    → Adopt one: herd workspace:adopt <path>\n")
 			}
-			addCheck("unservedWorktrees", "warning", strings.Join(lines, "; "), "herd workspace:adopt <path>")
+			addCheck("unservedWorktrees", "info", strings.Join(lines, "; "), "herd workspace:adopt <path>")
 			// Deliberately not counted in issues: this is a valid state.
 		} else if len(records) > 0 {
 			addCheck("unservedWorktrees", "ok", "", "")
