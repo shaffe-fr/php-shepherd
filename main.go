@@ -155,12 +155,28 @@ func resolveHerdDefaultPHP(dir string) (string, error) {
 	if whichErr == nil {
 		return php, nil
 	}
-	logVerbose("%v, falling back to Herd's global php.bat", whichErr)
-	php, globalErr := herdGlobalPHP()
+	logVerbose("%v, falling back to Herd's configured global PHP", whichErr)
+	php, globalErr := herdConfiguredGlobalPHP()
 	if globalErr != nil {
 		return "", fmt.Errorf("%v (is the Herd app running?); global fallback: %v", whichErr, globalErr)
 	}
 	return php, nil
+}
+
+// herdConfiguredGlobalPHP is the offline chain for the global PHP, shared
+// by execution (resolveHerdDefaultPHP) and `status`: Herd's php.bat, then
+// the app config's "activeVersion" (Herd 2).
+func herdConfiguredGlobalPHP() (string, error) {
+	php, err := herdGlobalPHP()
+	if err == nil {
+		return php, nil
+	}
+	if v := herdGlobalVersion(); v != "" {
+		if p, verr := resolveFromVersion(v); verr == nil {
+			return p, nil
+		}
+	}
+	return "", err
 }
 
 // herdBatTargetRe captures the php.exe that Herd's php.bat forwards to.
@@ -1540,18 +1556,7 @@ func cmdStatus() {
 		localVersion = findPHPVersion(cwd)
 	}
 
-	globalPHP, globalErr := herdGlobalPHP()
-	if globalErr != nil {
-		// Herd 2 also records the global version in config\config.json
-		// ("activeVersion") — a second offline source, tried before
-		// falling back to the highest installed build.
-		if v := herdGlobalVersion(); v != "" {
-			if php, err := resolveFromVersion(v); err == nil {
-				globalPHP = php
-				globalErr = nil
-			}
-		}
-	}
+	globalPHP, globalErr := herdConfiguredGlobalPHP()
 	if globalErr != nil {
 		globalPHP, globalErr = mostRecentPHP()
 	}

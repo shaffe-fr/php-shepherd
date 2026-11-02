@@ -16,21 +16,12 @@ var zendExtensions = map[string]bool{
 }
 
 // phpIniPath returns the path to the php.ini for the given php.exe
-// directory. Herd ships it next to php.exe (bin\phpNN); the Herd 2
-// documentation places it under config\php\NN instead, so that location is
-// used when the primary one is absent. When neither exists the primary
-// path is returned so callers report the expected location.
+// directory. Herd (1.x and 2.x, verified on 2.0.4 where `php --ini` reports
+// it as the loaded file) keeps it next to php.exe in bin\phpNN. The
+// config\php\NN directories Herd 2 creates are empty, so no fallback there:
+// it would only risk editing a file PHP never loads.
 func phpIniPath(phpDir string) string {
-	ini := filepath.Join(phpDir, "php.ini")
-	if _, err := os.Stat(ini); err == nil {
-		return ini
-	}
-	nodot := strings.TrimPrefix(filepath.Base(phpDir), "php")
-	alt := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "php", nodot, "php.ini")
-	if _, err := os.Stat(alt); err == nil {
-		return alt
-	}
-	return ini
+	return filepath.Join(phpDir, "php.ini")
 }
 
 // iniKeyRe matches an active (uncommented) assignment of key. The anchor and
