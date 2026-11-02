@@ -66,19 +66,19 @@ That's it. The installer places shims (`php.exe`, `composer.exe`, `shp.exe`) in 
 
 [Herd 2.0](https://herd.laravel.com) adds **workspaces**: isolated checkouts of a site, each served on its own subdomain (`<branch>.<parent-site>.<tld>`, e.g. `feature-auth.shop.test`). Shepherd supports them without any configuration:
 
-- **Version detection** — Herd 2 is detected from the `~/.config/herd/config/herd.json` file (absent on 1.x). Everything works offline; the desktop app is only needed to (re)start services, and Shepherd tells you so instead of silently no-op'ing.
+- **Version detection** — Herd 2 is detected on disk from `~/.config/herd/config/herd.json`, the workspace registry, or an `apiPort` in `config/config.json` (none exist on 1.x); any one of them is enough. Everything works offline; the desktop app is only needed to (re)start services, and Shepherd tells you so instead of silently no-op'ing.
 - **Workspaces are just sites** — Herd 2 links a workspace as a junction in `~/.config/herd/config/valet/Sites`, registers it in `config/valet/workspaces.json`, and drops a `.herd-workspace.json` marker at the checkout root. Shepherd resolves all three, so `shp use`, `shp which`, `shp status`, nginx syncing and `shp reverb` work inside a workspace exactly as they do for a regular site — on its own subdomain.
-- **Unadopted git worktrees** — a plain `git worktree add` checkout of a served site that Herd has not adopted yet is not a Herd site. When you run PHP inside one (with a `.phpversion`), Herd 2 will serve it on demand the first time its subdomain is visited; Shepherd detects the worktree (from its `.git` pointer, without invoking git) and prints a rate-limited hint:
+- **Unadopted git worktrees** — a plain `git worktree add` checkout of a served site that Herd has not adopted yet is not a Herd site. When you run PHP inside one (with a `.phpversion`), Herd does not serve it until it is linked (its subdomain does not resolve before that, as Windows has no wildcard DNS); Shepherd detects the worktree (from its `.git` pointer, without invoking git) and prints a rate-limited hint:
 
   ```
   shp: this directory is a git worktree of Herd site "shop" (branch "feature/auth"), not a Herd workspace yet.
-    Herd 2 serves it on demand at feature-auth.shop.test — or adopt it explicitly:
+    Herd does not serve it until it is linked. Adopt it to serve it as feature-auth.shop.test:
       herd workspace:adopt C:\Users\me\worktrees\feature-auth
   ```
 
   `shp doctor` also lists such worktrees.
 - **Service restarts** — on Herd 2 the phar restarts nginx / PHP-CGI through the app's local HTTP API (`apiPort` from `config\config.json`). With the app closed, Shepherd skips the no-op call and tells you to open Herd (the nginx config itself is already updated on disk).
-- **Bootstrap** — to run `herd.phar`, Shepherd prefers Herd's own `bin\find-usable-php.php` oracle on Herd 2 (which skips broken or RC builds), falling back to the highest installed PHP.
+- **Bootstrap** — to run `herd.phar`, Shepherd picks the newest non-RC build recorded in `config\php.json` on Herd 2, falling back to the highest installed PHP. It deliberately does not run Herd's `bin\find-usable-php.php`, which shells out to `php` and would re-enter Shepherd's own shim.
 
 ## Commands
 

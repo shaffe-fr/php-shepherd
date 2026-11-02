@@ -62,11 +62,43 @@ func herdWorkspacesRegistryPath() string {
 	return filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "valet", "workspaces.json")
 }
 
+// registryReadAttempts and registryReadDelay bound the retry of a registry
+// read: Windows can expose Herd's exclusive writer as a sharing violation,
+// and Herd itself retries the same read five times.
+const (
+	registryReadAttempts = 5
+	registryReadDelay    = 50 * time.Millisecond
+)
+
+// registryReadFile is the file reader behind the registry (a variable so
+// tests can simulate a locked file).
+var registryReadFile = os.ReadFile
+
+// readRegistryFile reads path, retrying a few times on errors other than
+// "does not exist" (a lock held by Herd's writer is transient).
+func readRegistryFile(path string) ([]byte, error) {
+	var err error
+	for attempt := 0; attempt < registryReadAttempts; attempt++ {
+		var data []byte
+		data, err = registryReadFile(path)
+		if err == nil {
+			return data, nil
+		}
+		if os.IsNotExist(err) {
+			return nil, err
+		}
+		if attempt < registryReadAttempts-1 {
+			time.Sleep(registryReadDelay)
+		}
+	}
+	return nil, err
+}
+
 // herdWorkspacesRegistry reads the workspace registry. A missing, empty or
-// malformed file yields no records — Herd 1 has no registry at all, and a
-// locked file (Herd writes it atomically) must not be a hard failure.
+// malformed file yields no records — Herd 1 has no registry at all. A
+// locked file is retried briefly (see readRegistryFile) before giving up.
 func herdWorkspacesRegistry() []workspaceRecord {
-	data, err := os.ReadFile(herdWorkspacesRegistryPath())
+	data, err := readRegistryFile(herdWorkspacesRegistryPath())
 	if err != nil {
 		return nil
 	}
@@ -110,30 +142,98 @@ func rootOf(dir string) string {
 	}
 }
 
-// markerWorkspaceRecord walks up from dir looking for the
-// .herd-workspace.json marker Herd writes at a workspace checkout root
-// (the same walk .phpversion uses, bounded by the first .git entry so a
-// monorepo app subdirectory still finds the marker at the checkout root).
-func markerWorkspaceRecord(dir string) (workspaceRecord, bool) {
+// hostLabelRe matches one legal DNS label.
+var hostLabelRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// validWorkspaceHost reports whether host is a legal DNS name made of
+// dot-separated labels (workspace hosts look like "feature-auth.shop").
+// Anything else — separators, "..", drive letters — is rejected, so a host
+// can never be turned into a path outside the directory it is joined to.
+func validWorkspaceHost(host string) bool {
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if !hostLabelRe.MatchString(label) {
+			return false
+		}
+	}
+	return true
+}
+
+// markerWorkspace walks up from dir looking for the .herd-workspace.json
+// marker Herd writes at a workspace checkout root (the same walk
+// .phpversion uses, bounded by the first .git entry so a monorepo app
+// subdirectory still finds the marker at the checkout root). It returns
+// the record and the directory the marker was found in.
+//
+// A marker is repository content and may be committed by anyone: a
+// "site" that is not a legal host name is discarded here. Use
+// findAssociatedWorkspaceRecord before anything that writes.
+func markerWorkspace(dir string) (workspaceRecord, string, bool) {
 	current := resolvePhysicalPath(dir)
 	for {
 		if data, err := os.ReadFile(filepath.Join(current, herdWorkspaceMarkerName)); err == nil {
 			var rec workspaceRecord
-			if json.Unmarshal(data, &rec) == nil && (rec.Site != "" || rec.Path != "") {
-				return rec, true
+			if json.Unmarshal(data, &rec) == nil && (rec.Site != "" || rec.Path != "") &&
+				(rec.Site == "" || validWorkspaceHost(rec.Site)) {
+				return rec, current, true
 			}
 		}
 		// A .git entry marks the checkout root: if the marker isn't here,
 		// this checkout is not a workspace — don't keep walking up.
 		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
-			return workspaceRecord{}, false
+			return workspaceRecord{}, "", false
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return workspaceRecord{}, false
+			return workspaceRecord{}, "", false
 		}
 		current = parent
 	}
+}
+
+// markerWorkspaceRecord is markerWorkspace without the marker's directory.
+func markerWorkspaceRecord(dir string) (workspaceRecord, bool) {
+	rec, _, ok := markerWorkspace(dir)
+	return rec, ok
+}
+
+// workspaceAssociated reports whether the workspace host really belongs to
+// the checkout, the association Herd itself requires before trusting a
+// marker: either the registry names this host for this checkout path, or
+// the physical Sites link for the host resolves to the checkout.
+func workspaceAssociated(host, checkout string) bool {
+	if !validWorkspaceHost(host) || checkout == "" {
+		return false
+	}
+	key := pathKey(checkout)
+	if key == "" {
+		return false
+	}
+	for _, rec := range herdWorkspacesRegistry() {
+		if rec.Path != "" && workspaceHost(rec) == host && pathKey(rec.Path) == key {
+			return true
+		}
+	}
+	link := filepath.Join(herdSitesDir(), host)
+	if _, err := os.Lstat(link); err == nil && pathKey(link) == key {
+		return true
+	}
+	return false
+}
+
+// findAssociatedWorkspaceRecord is findWorkspaceRecord restricted to
+// records proven to belong to dir's checkout. Marker-only data (a marker
+// no registry entry or Sites link vouches for) is ignored. This is the
+// variant to use before any mutation derived from the record.
+func findAssociatedWorkspaceRecord(dir string) *workspaceRecord {
+	if rec, root, ok := markerWorkspace(dir); ok {
+		if workspaceAssociated(workspaceHost(rec), root) {
+			return &rec
+		}
+	}
+	return registryWorkspaceRecord(dir)
 }
 
 // findWorkspaceRecord returns the workspace record for dir, or nil.
@@ -143,7 +243,12 @@ func findWorkspaceRecord(dir string) *workspaceRecord {
 	if rec, ok := markerWorkspaceRecord(dir); ok {
 		return &rec
 	}
+	return registryWorkspaceRecord(dir)
+}
 
+// registryWorkspaceRecord matches dir against the registry, by resolved
+// checkout path then app path.
+func registryWorkspaceRecord(dir string) *workspaceRecord {
 	records := herdWorkspacesRegistry()
 	if len(records) == 0 {
 		return nil
@@ -170,12 +275,15 @@ func findWorkspaceRecord(dir string) *workspaceRecord {
 
 // workspaceHost returns the hostname (without TLD) a workspace is served
 // under: the record's own "site" when present (Herd writes the exact
-// host), otherwise the host derived from branch + parent site like Herd.
+// host), otherwise the base host derived from branch + parent site. This
+// resolves an existing record, so no collision avoidance applies: the
+// workspace's own link or registry entry would make its host look taken.
 func workspaceHost(rec workspaceRecord) string {
 	if rec.Site != "" {
 		return rec.Site
 	}
-	return deriveWorkspaceHost(rec.Branch, rec.ParentSite, herdTLD())
+	host, _ := workspaceBaseHost(rec.Branch, rec.ParentSite, herdTLD())
+	return host
 }
 
 // maxDomainLength mirrors Workspace::MAX_DOMAIN_LENGTH — "host.tld" must
@@ -225,11 +333,12 @@ func workspaceHostTaken(host string) bool {
 	return false
 }
 
-// deriveWorkspaceHost replicates Workspace::deriveHost:
-// "<sanitized-branch>.<parent>" with the label clamped so that
-// "<label>.<parent>.<tld>" stays within Herd's domain budget. A numeric
-// suffix resolves collisions with hosts that are already taken.
-func deriveWorkspaceHost(branch, parentSite, tld string) string {
+// workspaceBaseHost computes the host Herd derives from a branch and a
+// parent site before any collision handling: "<sanitized-branch>.<parent>"
+// with the label clamped so that "<label>.<parent>.<tld>" stays within
+// Herd's domain budget. It also returns the clamped label and budget used
+// by the suffix ladder.
+func workspaceBaseHost(branch, parentSite, tld string) (host string, ladder func(suffix int) string) {
 	if tld == "" {
 		tld = "test"
 	}
@@ -254,11 +363,8 @@ func deriveWorkspaceHost(branch, parentSite, tld string) string {
 		return label + "." + parent
 	}
 
-	candidate := join(label)
-	suffix := 2
-	for i := 0; i < 32 && workspaceHostTaken(candidate); i++ {
+	return join(label), func(suffix int) string {
 		tail := "-" + strconv.Itoa(suffix)
-		suffix++
 		// PHP's substr() is a no-op when the length exceeds the string; cap
 		// the Go slice the same way.
 		keep := budget - len(tail)
@@ -268,7 +374,28 @@ func deriveWorkspaceHost(branch, parentSite, tld string) string {
 		if keep < 1 {
 			keep = 1
 		}
-		candidate = join(strings.TrimRight(label[:keep], "-") + tail)
+		return join(strings.TrimRight(label[:keep], "-") + tail)
+	}
+}
+
+// maxHostAttempts bounds the suffix ladder of deriveWorkspaceHost (a
+// variable so tests can exhaust it cheaply). Herd loops until a host is
+// free; the bound only protects against a pathological filesystem.
+var maxHostAttempts = 10000
+
+// deriveWorkspaceHost replicates Workspace::deriveHost for allocation: the
+// base host, then "-2", "-3", ... until the host is not taken. It returns
+// "" when no free host was found within maxHostAttempts, so callers never
+// present a name that belongs to another site.
+func deriveWorkspaceHost(branch, parentSite, tld string) string {
+	candidate, ladder := workspaceBaseHost(branch, parentSite, tld)
+	suffix := 2
+	for i := 0; workspaceHostTaken(candidate); i++ {
+		if i >= maxHostAttempts {
+			return ""
+		}
+		candidate = ladder(suffix)
+		suffix++
 	}
 	return candidate
 }
@@ -460,8 +587,10 @@ func findUnservedWorktree(dir string) *worktreeInfo {
 
 	// Find the served site whose repository this worktree belongs to: the
 	// site is a parked entry (or Sites link) whose checkout root is the
-	// main checkout.
+	// main checkout. When several names serve it, the first by name wins,
+	// like Herd's sitePaths().
 	siteName := ""
+	repoKey := pathKey(repoRoot)
 	for _, dir := range herdParkedPaths() {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -471,16 +600,20 @@ func findUnservedWorktree(dir string) *worktreeInfo {
 			if !e.IsDir() && e.Type()&os.ModeSymlink == 0 {
 				continue
 			}
-			if pathKey(rootOf(filepath.Join(dir, e.Name()))) == pathKey(repoRoot) {
-				siteName = e.Name()
-				break
+			if siteName != "" && e.Name() >= siteName {
+				continue
 			}
-		}
-		if siteName != "" {
-			break
+			if pathKey(rootOf(filepath.Join(dir, e.Name()))) == repoKey {
+				siteName = e.Name()
+			}
 		}
 	}
 	if siteName == "" {
+		return nil
+	}
+
+	domain := deriveWorkspaceHost(label, siteName, herdTLD())
+	if domain == "" {
 		return nil
 	}
 
@@ -490,7 +623,7 @@ func findUnservedWorktree(dir string) *worktreeInfo {
 		ParentSite: siteName,
 		Branch:     branch,
 		Head:       head,
-		Domain:     deriveWorkspaceHost(label, siteName, herdTLD()),
+		Domain:     domain,
 	}
 }
 
@@ -531,6 +664,15 @@ func listUnservedWorktrees() []worktreeInfo {
 	var out []worktreeInfo
 	sep := string(os.PathSeparator)
 
+	// A repository may be served under several names; like Herd, the
+	// first by name is its parent site. Resolve one entry per repository.
+	type repoSite struct {
+		root string
+		name string
+	}
+	repos := map[string]*repoSite{}
+	var repoOrder []string
+
 	for _, s := range sites {
 		key := pathKey(s.path)
 
@@ -551,6 +693,20 @@ func listUnservedWorktrees() []worktreeInfo {
 		if repoRoot == "" {
 			continue
 		}
+		rk := pathKey(repoRoot)
+		if existing, ok := repos[rk]; ok {
+			if s.name < existing.name {
+				existing.name = s.name
+			}
+			continue
+		}
+		repos[rk] = &repoSite{root: repoRoot, name: s.name}
+		repoOrder = append(repoOrder, rk)
+	}
+
+	for _, rk := range repoOrder {
+		repoRoot := repos[rk].root
+		siteName := repos[rk].name
 		// Cheap pre-check before touching the roster: most sites have no
 		// linked worktrees at all.
 		if _, err := os.Stat(filepath.Join(repoRoot, ".git", "worktrees")); err != nil {
@@ -578,14 +734,18 @@ func listUnservedWorktrees() []worktreeInfo {
 			if label == "" {
 				continue
 			}
+			domain := deriveWorkspaceHost(label, siteName, herdTLD())
+			if domain == "" {
+				continue
+			}
 			seen[ck] = true
 			out = append(out, worktreeInfo{
 				Checkout:   checkout,
 				ParentPath: repoRoot,
-				ParentSite: s.name,
+				ParentSite: siteName,
 				Branch:     branch,
 				Head:       head,
-				Domain:     deriveWorkspaceHost(label, s.name, herdTLD()),
+				Domain:     domain,
 			})
 		}
 	}
@@ -593,30 +753,32 @@ func listUnservedWorktrees() []worktreeInfo {
 }
 
 // worktreeHintCooldown limits how often the same checkout gets the
-// unadopted-worktree hint (positive or negative: the lock is touched
-// either way, so a non-worktree directory is only rescaned once per
-// interval).
+// unadopted-worktree hint. The lock is touched whether or not the checkout
+// turns out to be an unserved worktree, so a negative result is cached too
+// and a non-worktree directory is only rescanned once per interval.
 const worktreeHintCooldown = 10 * time.Minute
 
 // maybeHintUnservedWorktree prints a one-off hint when a .phpversion
 // version switch found no nginx config to update on Herd 2 and the
-// directory is a plain `git worktree add` checkout of a served site:
-// Herd 2 serves such worktrees on demand under a branch subdomain, and
-// visiting it (or `herd workspace:adopt`) registers them.
+// directory is a plain `git worktree add` checkout of a served site.
+// Herd 2 does not serve such a worktree until it is linked, and its
+// subdomain does not resolve before that (Windows has no wildcard DNS), so
+// the hint leads with the adopt command and shows the derived host only as
+// the name the workspace will get.
 func maybeHintUnservedWorktree(dir string) {
 	if quiet {
 		return
 	}
 
-	lockName := ".worktree_hint_" + strconv.FormatUint(fnvHash(dir), 16)
+	// Key the cooldown on the checkout, so sibling subdirectories share it.
+	key := rootOf(dir)
+	if key == "" {
+		key = dir
+	}
+	lockName := ".worktree_hint_" + strconv.FormatUint(fnvHash(pathKey(key)), 16)
 	lockPath := filepath.Join(shepherdDataDir(), lockName)
 	info, err := os.Stat(lockPath)
 	if err == nil && time.Since(info.ModTime()) < worktreeHintCooldown {
-		return
-	}
-
-	wt := findUnservedWorktree(dir)
-	if wt == nil {
 		return
 	}
 
@@ -625,9 +787,14 @@ func maybeHintUnservedWorktree(dir string) {
 		_ = f.Close()
 	}
 
+	wt := findUnservedWorktree(dir)
+	if wt == nil {
+		return
+	}
+
 	fmt.Fprintf(os.Stderr,
 		"shp: this directory is a git worktree of Herd site %q (branch %q), not a Herd workspace yet.\n"+
-			"  Herd 2 serves it on demand at %s — or adopt it explicitly:\n"+
+			"  Herd does not serve it until it is linked. Adopt it to serve it as %s:\n"+
 			"    herd workspace:adopt %s\n",
 		wt.ParentSite, firstNonEmpty(wt.Branch, "detached "+wt.Head), wt.Domain+"."+herdTLD(), wt.Checkout)
 }
