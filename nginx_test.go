@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -225,7 +226,7 @@ func TestRestartNginx(t *testing.T) {
 		_ = os.MkdirAll(configDir, 0755)
 		_ = os.WriteFile(filepath.Join(configDir, "herd.json"), []byte("{}"), 0644)
 		// The API port is not listening → the app is closed.
-		_ = os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"apiPort": 23998}`), 0644)
+		_ = os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"apiPort": `+strconv.Itoa(closedPort(t))+`}`), 0644)
 		_ = os.MkdirAll(filepath.Join(herdBin, "php84"), 0755)
 		// If the phar were attempted, this non-executable file would make
 		// exec fail and restartNginx would return an error.

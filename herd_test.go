@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -366,8 +367,8 @@ func TestHerdVersionString(t *testing.T) {
 	})
 
 	t.Run("Herd 2.x when the app is closed", func(t *testing.T) {
-		// Point the API at a port nothing listens on.
-		_ = os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"apiPort": 23999}`), 0644)
+		// Point the API at an ephemeral port that was bound then released.
+		_ = os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"apiPort": `+strconv.Itoa(closedPort(t))+`}`), 0644)
 		_ = os.WriteFile(filepath.Join(configDir, "herd.json"), []byte("{}"), 0644)
 		if got := herdVersionString(); got != "Herd 2.x" {
 			t.Errorf("herdVersionString() = %q, want Herd 2.x", got)
