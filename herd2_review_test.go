@@ -531,8 +531,13 @@ func TestMaybeHintUnservedWorktree(t *testing.T) {
 	_, _, checkout := unservedWorktreeEnv(t)
 	quiet = false
 
+	// The hint prints the checkout as findUnservedWorktree resolves it
+	// (rootOf → resolvePhysicalPath), which is not textually equal to the
+	// path we joined: a Windows temp dir resolves through 8.3/symlink
+	// normalization. Compare against the resolved form the code emits.
+	resolvedCheckout := rootOf(checkout)
 	first := captureStderr(t, func() { maybeHintUnservedWorktree(checkout) })
-	if !strings.Contains(first, "herd workspace:adopt "+checkout) {
+	if !strings.Contains(first, "herd workspace:adopt "+resolvedCheckout) {
 		t.Fatalf("hint should lead with the adopt command, got: %q", first)
 	}
 	if strings.Contains(first, "serves it on demand") {
