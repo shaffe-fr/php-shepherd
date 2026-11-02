@@ -689,9 +689,38 @@ func TestNginxConfDir(t *testing.T) {
 }
 
 func TestPhpIniPath(t *testing.T) {
-	got := phpIniPath("C:\\php84")
-	if got != "C:\\php84\\php.ini" {
-		t.Errorf("phpIniPath() = %q, want %q", got, "C:\\php84\\php.ini")
+	profile := t.TempDir()
+	t.Setenv("USERPROFILE", profile)
+
+	// Primary location present (bin\phpNN\php.ini): returned as-is.
+	primaryDir := filepath.Join(profile, `AppData\Local\Herd\bin\php84`)
+	if err := os.MkdirAll(primaryDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	primary := filepath.Join(primaryDir, "php.ini")
+	if err := os.WriteFile(primary, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := phpIniPath(primaryDir), primary; got != want {
+		t.Errorf("phpIniPath() = %q, want %q", got, want)
+	}
+
+	// Primary absent, Herd 2-style fallback present (config\php\NN\php.ini): fallback used.
+	fallback := filepath.Join(profile, `.config\herd\config\php\82\php.ini`)
+	if err := os.MkdirAll(filepath.Dir(fallback), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fallback, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := phpIniPath(filepath.Join(profile, `AppData\Local\Herd\bin\php82`)), fallback; got != want {
+		t.Errorf("phpIniPath() = %q, want %q", got, want)
+	}
+
+	// Neither present: the primary path is the default.
+	php74 := filepath.Join(profile, `AppData\Local\Herd\bin\php74`)
+	if got, want := phpIniPath(php74), filepath.Join(php74, "php.ini"); got != want {
+		t.Errorf("phpIniPath() = %q, want %q", got, want)
 	}
 }
 

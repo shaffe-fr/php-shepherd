@@ -144,9 +144,10 @@ func resolveCurrentPHP(cwd string) (phpPath, version string, err error) {
 
 // resolveHerdDefaultPHP returns the PHP Herd would use for dir when no
 // .phpversion applies. herd.phar which-php refuses to answer while the Herd
-// desktop app is closed, so Herd's global php.bat is read instead in that case.
+// desktop app is closed (it asks the app for the global version in that
+// case), so Herd's global php.bat is read instead in that case.
 func resolveHerdDefaultPHP(dir string) (string, error) {
-	bootstrap, err := mostRecentPHP()
+	bootstrap, err := herdBootstrapPHP()
 	if err != nil {
 		return "", err
 	}
@@ -179,22 +180,32 @@ func herdGlobalPHP() (string, error) {
 	return validateHerdPHPPath(string(m[1]))
 }
 
-// mostRecentPHP finds the highest-versioned php.exe under Herd.
-func mostRecentPHP() (string, error) {
+// installedPHPPaths returns the php.exe of every installed Herd PHP
+// build, highest version first.
+func installedPHPPaths() []string {
 	pattern := filepath.Join(herdHome(), "php*")
 	matches, err := filepath.Glob(pattern)
 	if err != nil || len(matches) == 0 {
-		return "", fmt.Errorf("no PHP installations found in %s", herdHome())
+		return nil
 	}
 	// Sort by numeric PHP version (descending) so php810 (8.10) ranks above php84 (8.4).
 	sort.Slice(matches, func(i, j int) bool {
 		return phpDirVersion(matches[i]) > phpDirVersion(matches[j])
 	})
+	var out []string
 	for _, m := range matches {
 		php := filepath.Join(m, "php.exe")
 		if _, err := os.Stat(php); err == nil {
-			return php, nil
+			out = append(out, php)
 		}
+	}
+	return out
+}
+
+// mostRecentPHP finds the highest-versioned php.exe under Herd.
+func mostRecentPHP() (string, error) {
+	if paths := installedPHPPaths(); len(paths) > 0 {
+		return paths[0], nil
 	}
 	return "", fmt.Errorf("no php.exe found in %s", herdHome())
 }
@@ -656,11 +667,16 @@ func main() {
 	// Sync nginx config in background (if .phpversion exists)
 	if fromDotfile {
 		logVerbose("syncing nginx config for version %s", phpVersion)
-		changed := syncNginx(cwd, phpVersion)
+		changed, found := syncNginx(cwd, phpVersion)
 
 		// Ensure PHP-CGI service is running only if nginx config changed (version switch)
 		if changed {
 			ensurePhpCgiRunning(phpVersion)
+		} else if !found && isHerd2() {
+			// No conf means this directory is not a Herd site. On Herd 2
+			// that is what an unadopted git worktree looks like: point the
+			// user at the subdomain Herd will serve it under.
+			maybeHintUnservedWorktree(cwd)
 		}
 	}
 
@@ -1526,11 +1542,32 @@ func cmdStatus() {
 
 	globalPHP, globalErr := herdGlobalPHP()
 	if globalErr != nil {
+		// Herd 2 also records the global version in config\config.json
+		// ("activeVersion") — a second offline source, tried before
+		// falling back to the highest installed build.
+		if v := herdGlobalVersion(); v != "" {
+			if php, err := resolveFromVersion(v); err == nil {
+				globalPHP = php
+				globalErr = nil
+			}
+		}
+	}
+	if globalErr != nil {
 		globalPHP, globalErr = mostRecentPHP()
 	}
 	globalVersion := ""
 	if globalErr == nil {
 		globalVersion = extractVersion(globalPHP)
+	}
+
+	// Herd version and workspace context for the current directory
+	herdVersion := ""
+	if checkHerd() {
+		herdVersion = herdVersionString()
+	}
+	var wsRec *workspaceRecord
+	if cwd != "" {
+		wsRec = findWorkspaceRecord(cwd)
 	}
 
 	// Xdebug status
@@ -1542,7 +1579,7 @@ func cmdStatus() {
 	xdebugMode := ""
 	if activeVersion != "" {
 		nodot := strings.ReplaceAll(activeVersion, ".", "")
-		iniPath := filepath.Join(herdHome(), "php"+nodot, "php.ini")
+		iniPath := phpIniPath(filepath.Join(herdHome(), "php"+nodot))
 		if data, err := os.ReadFile(iniPath); err == nil {
 			lines := strings.Split(string(data), "\n")
 			for _, line := range lines {
@@ -1603,6 +1640,7 @@ func cmdStatus() {
 		status := map[string]interface{}{
 			"phpLocal":              nilIfEmpty(localVersion),
 			"phpGlobal":             nilIfEmpty(globalVersion),
+			"herdVersion":           nilIfEmpty(herdVersion),
 			"xdebugEnabled":         xdebugEnabled,
 			"xdebugMode":            nilIfEmpty(xdebugMode),
 			"phpShimInstalled":      phpShimInstalled,
@@ -1611,6 +1649,15 @@ func cmdStatus() {
 			"pathConfigured":        pathOK,
 			"pathGuardEnabled":      guardEnabled,
 			"shepherdVersion":       version,
+		}
+		if wsRec != nil {
+			status["workspace"] = map[string]interface{}{
+				"name":   wsRec.Name,
+				"parent": wsRec.ParentSite,
+				"domain": workspaceHost(*wsRec) + "." + herdTLD(),
+				"branch": wsRec.Branch,
+				"php":    nilIfEmpty(wsRec.PhpVersion),
+			}
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -1631,6 +1678,13 @@ func cmdStatus() {
 		fmt.Printf("  PHP global: %s\n", globalVersion)
 	} else {
 		fmt.Printf("  PHP global: (not found)\n")
+	}
+	if herdVersion != "" {
+		fmt.Printf("  Herd:       %s\n", herdVersion)
+	}
+	if wsRec != nil {
+		fmt.Printf("  Workspace:  %s (parent: %s, branch: %s, domain: %s)\n",
+			wsRec.Name, wsRec.ParentSite, wsRec.Branch, workspaceHost(*wsRec)+"."+herdTLD())
 	}
 
 	if xdebugEnabled {

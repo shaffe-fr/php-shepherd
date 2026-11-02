@@ -14,16 +14,26 @@ func nginxConfDir() string {
 	return filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "valet", "Nginx")
 }
 
-// findNginxConfsForProject finds all .test.conf files that correspond to the
-// given physical project directory. It scans all of Herd's registered paths
-// (from config.json) for directories, junctions, and symlinks that resolve
-// to the same physical path.
+// findNginxConfsForProject finds all nginx conf files that correspond to
+// the given physical project directory. It scans all of Herd's registered
+// paths (from config.json) for directories, junctions, and symlinks that
+// resolve to the same physical path. On Herd 2 the workspace registry is
+// consulted as well, so a workspace's conf is found even when its Sites
+// junction is missing or broken.
 func findNginxConfsForProject(physicalDir string) []string {
 	confDir := nginxConfDir()
 	physicalDirLower := strings.ToLower(resolvePhysicalPath(physicalDir))
 
 	// Collect all domain names that map to this physical directory
 	var domains []string
+
+	// Herd 2 workspaces: the registry names the exact host, which wins
+	// over the filesystem scan below when both apply.
+	if rec := findWorkspaceRecord(physicalDir); rec != nil {
+		if host := workspaceHost(*rec); host != "" {
+			domains = append(domains, host)
+		}
+	}
 
 	for _, dir := range herdParkedPaths() {
 		entries, err := os.ReadDir(dir)
@@ -43,11 +53,14 @@ func findNginxConfsForProject(physicalDir string) []string {
 		}
 	}
 
-	// Deduplicate and resolve to conf file paths
+	// Deduplicate and resolve to conf file paths. Herd names its confs
+	// "<host>.<tld>.conf", so the TLD comes from Herd's config, not a
+	// hardcoded "test".
+	tld := herdTLD()
 	seen := map[string]bool{}
 	var confs []string
 	for _, domain := range domains {
-		confName := domain + ".test.conf"
+		confName := domain + "." + tld + ".conf"
 		if seen[confName] {
 			continue
 		}
@@ -150,8 +163,15 @@ func updateNginxConf(confPath, version string) bool {
 
 // restartNginx triggers a Herd nginx restart via herd.phar.
 // Returns nil on success, or an error if the restart could not be performed.
+// On Herd 2 the app is closed (nginx is (re)started by the app through its
+// local API), the phar call would be a silent no-op: nothing is done and
+// nil is returned — the config change takes effect when Herd is opened.
 func restartNginx() error {
-	bootstrap, err := mostRecentPHP()
+	if isHerd2() && !herdAppRunning() {
+		logVerbose("nginx restart skipped: the Herd app is not running (Herd 2 restarts nginx via its API)")
+		return nil
+	}
+	bootstrap, err := herdBootstrapPHP()
 	if err != nil {
 		return err
 	}
@@ -164,17 +184,20 @@ func restartNginx() error {
 
 // syncNginx updates all Herd nginx configs for the project, then restarts nginx once.
 // It resolves symlinks/junctions to find the physical project path, scans for all
-// related conf files (including aliases via herd link), applies per-domain rate
-// limiting, and triggers a single restart if any conf was modified.
-// Returns true if any config was actually changed (indicating a version switch).
-func syncNginx(projectDir, version string) bool {
+// related conf files (including aliases via herd link and Herd 2 workspaces),
+// applies per-domain rate limiting, and triggers a single restart if any conf
+// was modified.
+// Returns whether any config was actually changed (indicating a version
+// switch) and whether any config was found for the project at all (false
+// means the directory is not a Herd site — e.g. an unadopted git worktree).
+func syncNginx(projectDir, version string) (changed bool, found bool) {
 	// Resolve NTFS junctions/symlinks to the real physical path
 	physicalDir := resolvePhysicalPath(projectDir)
 
 	// Find all nginx conf files that reference this project
 	confs := findNginxConfsForProject(physicalDir)
 	if len(confs) == 0 {
-		return false
+		return false, false
 	}
 
 	needNginxRestart := false
@@ -197,10 +220,10 @@ func syncNginx(projectDir, version string) bool {
 
 	// Single nginx restart for all modified confs
 	if !needNginxRestart {
-		return false
+		return false, true
 	}
 
 	logVerbose("restarting nginx (configs modified)")
 	_ = restartNginx()
-	return true
+	return true, true
 }
