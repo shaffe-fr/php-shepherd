@@ -705,15 +705,17 @@ func TestPhpIniPath(t *testing.T) {
 		t.Errorf("phpIniPath() = %q, want %q", got, want)
 	}
 
-	// Primary absent, Herd 2-style fallback present (config\php\NN\php.ini): fallback used.
-	fallback := filepath.Join(profile, `.config\herd\config\php\82\php.ini`)
-	if err := os.MkdirAll(filepath.Dir(fallback), 0o755); err != nil {
+	// A file under config\php\NN is never used: Herd 2 leaves those
+	// directories empty and PHP loads bin\phpNN\php.ini.
+	stale := filepath.Join(profile, `.config\herd\config\php\82\php.ini`)
+	if err := os.MkdirAll(filepath.Dir(stale), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(fallback, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(stale, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := phpIniPath(filepath.Join(profile, `AppData\Local\Herd\bin\php82`)), fallback; got != want {
+	php82 := filepath.Join(profile, `AppData\Local\Herd\bin\php82`)
+	if got, want := phpIniPath(php82), filepath.Join(php82, "php.ini"); got != want {
 		t.Errorf("phpIniPath() = %q, want %q", got, want)
 	}
 
