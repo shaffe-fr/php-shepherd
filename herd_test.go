@@ -305,3 +305,132 @@ func TestInstalledPHPVersions(t *testing.T) {
 		}
 	}
 }
+
+func TestIsHerd2(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("USERPROFILE", root)
+	configDir := filepath.Join(root, ".config", "herd", "config")
+	_ = os.MkdirAll(configDir, 0755)
+
+	t.Run("false without the marker", func(t *testing.T) {
+		if isHerd2() {
+			t.Error("expected false without config/herd.json")
+		}
+	})
+
+	t.Run("true with the marker", func(t *testing.T) {
+		_ = os.WriteFile(filepath.Join(configDir, "herd.json"), []byte("{}"), 0644)
+		if !isHerd2() {
+			t.Error("expected true with config/herd.json")
+		}
+	})
+}
+
+func TestHerdApiPort(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("USERPROFILE", root)
+	configDir := filepath.Join(root, ".config", "herd", "config")
+	_ = os.MkdirAll(configDir, 0755)
+
+	t.Run("defaults to 2304 without config", func(t *testing.T) {
+		if got := herdApiPort(); got != 2304 {
+			t.Errorf("herdApiPort() = %d, want 2304", got)
+		}
+	})
+
+	t.Run("reads apiPort from config", func(t *testing.T) {
+		_ = os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"apiPort": 9001}`), 0644)
+		if got := herdApiPort(); got != 9001 {
+			t.Errorf("herdApiPort() = %d, want 9001", got)
+		}
+	})
+
+	t.Run("defaults on zero port", func(t *testing.T) {
+		_ = os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"apiPort": 0}`), 0644)
+		if got := herdApiPort(); got != 2304 {
+			t.Errorf("herdApiPort() = %d, want 2304", got)
+		}
+	})
+}
+
+func TestHerdVersionString(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("USERPROFILE", root)
+	configDir := filepath.Join(root, ".config", "herd", "config")
+	_ = os.MkdirAll(configDir, 0755)
+
+	t.Run("Herd 1.x without the marker", func(t *testing.T) {
+		if got := herdVersionString(); got != "Herd 1.x" {
+			t.Errorf("herdVersionString() = %q, want Herd 1.x", got)
+		}
+	})
+
+	t.Run("Herd 2.x when the app is closed", func(t *testing.T) {
+		// Point the API at a port nothing listens on.
+		_ = os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"apiPort": 23999}`), 0644)
+		_ = os.WriteFile(filepath.Join(configDir, "herd.json"), []byte("{}"), 0644)
+		if got := herdVersionString(); got != "Herd 2.x" {
+			t.Errorf("herdVersionString() = %q, want Herd 2.x", got)
+		}
+	})
+}
+
+func TestHerdGlobalVersion(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("USERPROFILE", root)
+	configDir := filepath.Join(root, ".config", "herd", "config")
+	_ = os.MkdirAll(configDir, 0755)
+
+	t.Run("empty without config", func(t *testing.T) {
+		if got := herdGlobalVersion(); got != "" {
+			t.Errorf("herdGlobalVersion() = %q, want empty", got)
+		}
+	})
+
+	t.Run("reads activeVersion", func(t *testing.T) {
+		_ = os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"activeVersion": "8.4"}`), 0644)
+		if got := herdGlobalVersion(); got != "8.4" {
+			t.Errorf("herdGlobalVersion() = %q, want 8.4", got)
+		}
+	})
+}
+
+func TestHerdBootstrapPHP(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("USERPROFILE", root)
+	herdBin := filepath.Join(root, ".config", "herd", "bin")
+	_ = os.MkdirAll(herdBin, 0755)
+
+	// Fake PHP builds; the .exe files are not valid executables, so the
+	// find-usable-php.php script cannot actually run — the bootstrap must
+	// fall back to the highest installed PHP in both Herd versions.
+	for _, ver := range []string{"php84", "php85"} {
+		dir := filepath.Join(herdBin, ver)
+		_ = os.MkdirAll(dir, 0755)
+		_ = os.WriteFile(filepath.Join(dir, "php.exe"), []byte("fake"), 0755)
+	}
+	_ = os.WriteFile(filepath.Join(herdBin, "find-usable-php.php"), []byte("<?php // fake"), 0644)
+
+	t.Run("Herd 1 uses the highest installed PHP", func(t *testing.T) {
+		php, err := herdBootstrapPHP()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if filepath.Base(filepath.Dir(php)) != "php85" {
+			t.Errorf("expected php85, got %s", filepath.Dir(php))
+		}
+	})
+
+	t.Run("Herd 2 falls back when the oracle cannot run", func(t *testing.T) {
+		configDir := filepath.Join(root, ".config", "herd", "config")
+		_ = os.MkdirAll(configDir, 0755)
+		_ = os.WriteFile(filepath.Join(configDir, "herd.json"), []byte("{}"), 0644)
+		php, err := herdBootstrapPHP()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if filepath.Base(filepath.Dir(php)) != "php85" {
+			t.Errorf("expected php85 fallback, got %s", filepath.Dir(php))
+		}
+	})
+}

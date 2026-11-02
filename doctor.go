@@ -37,6 +37,10 @@ func cmdDoctor() {
 
 	issues := 0
 
+	// Computed once: the Herd 2 app-closed state gates several checks
+	// (each dial would otherwise cost up to a second when the port is dead).
+	herd2AppClosed := checkHerd() && isHerd2() && !herdAppRunning()
+
 	// 0. Check Herd is installed
 	if !checkHerd() {
 		if !jsonOutput {
@@ -47,9 +51,9 @@ func cmdDoctor() {
 		issues++
 	} else {
 		if !jsonOutput {
-			fmt.Printf("  ✓ Laravel Herd found\n")
+			fmt.Printf("  ✓ Laravel Herd found (%s)\n", herdVersionString())
 		}
-		addCheck("herd", "ok", "", "")
+		addCheck("herd", "ok", herdVersionString(), "")
 	}
 
 	// 1. Check .phpversion in cwd
@@ -354,17 +358,7 @@ func cmdDoctor() {
 
 	// 11. Check that PHP-CGI processes are listening for all isolated versions
 	if checkHerd() {
-		// Read Herd's base PHP port from config.json (default 9000)
-		basePort := 9000
-		herdCfgPath := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "config.json")
-		if cfgData, err := os.ReadFile(herdCfgPath); err == nil {
-			var herdCfg struct {
-				BasePhpPort int `json:"basePhpPort"`
-			}
-			if json.Unmarshal(cfgData, &herdCfg) == nil && herdCfg.BasePhpPort > 0 {
-				basePort = herdCfg.BasePhpPort
-			}
-		}
+		basePort := herdBasePort()
 
 		// Scan nginx confs for unique $herd_sock_XX references
 		reSock := regexp.MustCompile(`\$herd_sock_(\d+)`)
@@ -405,17 +399,95 @@ func cmdDoctor() {
 				addCheck("phpCgi_"+ver, "ok", fmt.Sprintf("port %d listening", port), "")
 			} else {
 				siteList := strings.Join(domains, ", ")
+				// On Herd 2 with the app closed, every PHP-CGI service is
+				// down and only the app can start them again.
+				fix := "Restart Herd completely to start PHP " + prettyVer
+				if herd2AppClosed {
+					fix = "Open the Herd app to start PHP " + prettyVer
+				}
 				if !jsonOutput {
 					fmt.Printf("  ✗ PHP %s (port %d) is NOT running — affects: %s\n", prettyVer, port, siteList)
-					fmt.Printf("    → Restart Herd completely (quit and relaunch) to start the PHP %s service\n", prettyVer)
+					if herd2AppClosed {
+						fmt.Printf("    → Open the Herd app to start the PHP %s service\n", prettyVer)
+					} else {
+						fmt.Printf("    → Restart Herd completely (quit and relaunch) to start the PHP %s service\n", prettyVer)
+					}
 				}
 				addCheck("phpCgi_"+ver, "error",
 					fmt.Sprintf("port %d not listening, affects: %s", port, siteList),
-					"Restart Herd completely to start PHP "+prettyVer)
+					fix)
 				deadVersions++
 			}
 		}
 		issues += deadVersions
+	}
+
+	// 12. Herd 2: app state and workspace health
+	if isHerd2() {
+		if herd2AppClosed {
+			// Informational, not a problem: the CLI keeps working with the
+			// app closed; it only gates nginx/PHP-CGI (re)starts.
+			if !jsonOutput {
+				fmt.Printf("  • Herd 2 app is closed — nginx and PHP-CGI cannot be (re)started until it is opened (CLI PHP is unaffected)\n")
+			}
+			addCheck("herdApp", "warning", "app closed (service restarts unavailable)", "Open the Herd app")
+		} else {
+			addCheck("herdApp", "ok", "", "")
+		}
+
+		// Orphaned workspaces: registry records whose checkout vanished,
+		// or whose Sites link was removed by hand.
+		records := herdWorkspacesRegistry()
+		if len(records) > 0 {
+			var orphans []string
+			sitesDir := herdSitesDir()
+			for _, rec := range records {
+				if rec.Path != "" {
+					if _, err := os.Stat(filepath.FromSlash(rec.Path)); err != nil {
+						orphans = append(orphans, rec.Name)
+						continue
+					}
+				}
+				if host := workspaceHost(rec); host != "" {
+					if _, err := os.Stat(filepath.Join(sitesDir, host)); err != nil {
+						orphans = append(orphans, rec.Name)
+						continue
+					}
+				}
+			}
+			if len(orphans) > 0 {
+				if !jsonOutput {
+					fmt.Printf("  ⚠ Orphaned workspace records: %s\n", strings.Join(orphans, ", "))
+					fmt.Printf("    → Their checkouts or Sites links are gone; clean them up with `herd workspaces --all`\n")
+				}
+				addCheck("workspaceOrphans", "warning", strings.Join(orphans, ", "), "herd workspaces --all")
+				issues += len(orphans)
+			} else {
+				addCheck("workspaceOrphans", "ok", "", "")
+			}
+		}
+
+		// Git worktrees of served sites that Herd has not adopted yet:
+		// information only — Herd serves them on demand when visited.
+		if unserved := listUnservedWorktrees(); len(unserved) > 0 {
+			tld := herdTLD()
+			var lines []string
+			for _, wt := range unserved {
+				lines = append(lines, fmt.Sprintf("%s (site %s, branch %s → %s)",
+					wt.Checkout, wt.ParentSite, firstNonEmpty(wt.Branch, "detached"), wt.Domain+"."+tld))
+			}
+			if !jsonOutput {
+				fmt.Printf("  • %d git worktree(s) of served sites not adopted as workspaces yet (served on demand when visited):\n", len(unserved))
+				for _, l := range lines {
+					fmt.Printf("      %s\n", l)
+				}
+				fmt.Printf("    → Adopt one: herd workspace:adopt <path>\n")
+			}
+			addCheck("unservedWorktrees", "warning", strings.Join(lines, "; "), "herd workspace:adopt <path>")
+			// Deliberately not counted in issues: this is a valid state.
+		} else if len(records) > 0 {
+			addCheck("unservedWorktrees", "ok", "", "")
+		}
 	}
 
 	// Output

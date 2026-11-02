@@ -77,9 +77,25 @@ func herdTLD() string {
 	return config.TLD
 }
 
-// findProjectDomain resolves the domain name for the current project directory
-// by scanning Herd's parked paths for a matching entry.
+// herdSitesDir returns Herd's linked-sites directory. It is itself a
+// registered parked path: the workspaces Herd 2 links live here as
+// junctions.
+func herdSitesDir() string {
+	return filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "valet", "Sites")
+}
+
+// findProjectDomain resolves the domain name (without TLD) for the given
+// directory. A registered Herd 2 workspace answers first — its record
+// carries the exact host it is served under. Otherwise Herd's parked
+// paths are scanned, which also covers workspace junctions and every
+// Herd 1 site.
 func findProjectDomain(projectDir string) string {
+	if rec := findWorkspaceRecord(projectDir); rec != nil {
+		if host := workspaceHost(*rec); host != "" {
+			return host
+		}
+	}
+
 	physicalDir := strings.ToLower(resolvePhysicalPath(projectDir))
 
 	for _, dir := range herdParkedPaths() {
@@ -103,8 +119,7 @@ func findProjectDomain(projectDir string) string {
 
 // herdBasePort reads Herd's base PHP port from config.json (default 9000).
 func herdBasePort() int {
-	cfgPath := filepath.Join(os.Getenv("USERPROFILE"), ".config", "herd", "config", "config.json")
-	data, err := os.ReadFile(cfgPath)
+	data, err := os.ReadFile(herdAppConfigPath())
 	if err != nil {
 		return 9000
 	}
@@ -137,13 +152,24 @@ func ensurePhpCgiRunning(phpVersion string) bool {
 		}
 	}
 
+	// On Herd 2 the PHP-CGI services are (re)started by the desktop app
+	// through its local API; herd.phar only forwards the request. With the
+	// app closed that call is a silent no-op, so point the user at the
+	// app instead of pretending a restart happened.
+	if isHerd2() && !herdAppRunning() {
+		if !quiet {
+			fmt.Fprintf(os.Stderr, "shp: PHP %s service is not running and the Herd app is closed. Open Herd to start it — the nginx config is already updated.\n", phpVersion)
+		}
+		return false
+	}
+
 	// PHP-CGI is not running — attempt restart via herd.phar
 	logVerbose("PHP %s (port %d) is not responding, restarting Herd PHP services...", phpVersion, port)
 	if !quiet {
 		fmt.Fprintf(os.Stderr, "shp: PHP %s service is not running, restarting Herd...\n", phpVersion)
 	}
 
-	bootstrap, err := mostRecentPHP()
+	bootstrap, err := herdBootstrapPHP()
 	if err != nil {
 		return false
 	}
@@ -178,7 +204,7 @@ func ensurePhpCgiRunning(phpVersion string) bool {
 // herdInstallPHP installs a PHP version via herd.phar.
 // It uses the highest installed PHP as bootstrap to run herd.phar.
 func herdInstallPHP(version string) error {
-	bootstrap, err := mostRecentPHP()
+	bootstrap, err := herdBootstrapPHP()
 	if err != nil {
 		return fmt.Errorf("no PHP available to bootstrap Herd: %w", err)
 	}

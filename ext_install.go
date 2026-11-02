@@ -284,7 +284,7 @@ func cmdExtInstall() {
 	}
 
 	// Update php.ini
-	iniPath := filepath.Join(phpDir, "php.ini")
+	iniPath := phpIniPath(phpDir)
 	if err := addExtensionToIni(iniPath, extName); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Add manually: %s=%s\n", extDef.directive, extName)
@@ -390,7 +390,7 @@ func installExtForVersion(extDef *extDefinition, extName, extVersion, phpVersion
 	}
 
 	// Update php.ini
-	iniPath := filepath.Join(phpDir, "php.ini")
+	iniPath := phpIniPath(phpDir)
 	if err := addExtensionToIni(iniPath, extName); err != nil {
 		fmt.Printf("  Warning: %v — add manually: %s=%s\n", err, extDef.directive, extName)
 	}
@@ -587,7 +587,7 @@ func cmdExtList() {
 	}
 
 	// Read php.ini to determine which are enabled
-	iniPath := filepath.Join(phpDir, "php.ini")
+	iniPath := phpIniPath(phpDir)
 	iniData, _ := os.ReadFile(iniPath)
 	iniContent := strings.ToLower(string(iniData))
 
@@ -775,7 +775,7 @@ func removeExtForVersion(extName, phpVersion string) bool {
 	}
 
 	// Remove from php.ini
-	iniPath := filepath.Join(phpDir, "php.ini")
+	iniPath := phpIniPath(phpDir)
 	if err := removeExtensionFromIni(iniPath, extName); err != nil {
 		fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
 	} else {
